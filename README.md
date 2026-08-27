@@ -29,7 +29,7 @@ Borrow the architecture email already used to solve a version of this problem: D
 | `README.md` | This file |
 | `CONTRIBUTING.md` | How to file issues and PRs against the draft |
 | `CHANGELOG.md` | Revision history |
-| `tools/section_ref_checker.py` | Catches cross-reference drift when section numbers change on revision (optional, no dependencies beyond the Python standard library) |
+| `section_ref_checker.py` | Catches cross-reference drift when section numbers change on revision (optional, no dependencies beyond the Python standard library) |
 
 ## Where the draft is honest about its own gaps
 
