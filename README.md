@@ -18,7 +18,7 @@ Borrow the architecture email already used to solve a version of this problem: D
 
 - **[Full draft](./draft-zink-xboundary-ai-text-watermark-verification-00.md)** — the specification itself
 - [DNS-Based Framework for Cross-Organization Verification of AI-Generated Text Watermarks](https://docs.google.com/presentation/d/1ezyFW0LdVhTZ_UWJN1bCy3xGd1ajZ2QLacJlaD-82dg/edit?usp=sharing) (slide deck)
-- **Plain-English companion** — [zinksthinks.substack.com](https://zinksthinks.substack.com) (coming soon)
+- **Plain-English companion** — [Zink's Thinks quick overview](https://zinksthinks.substack.com/p/theres-a-watermark-in-this-sentence)
 - YouTube video explainer - Cross-organization verification of AI-generated Text watermarks (Coming soon)
 - **[CONTRIBUTING.md](./CONTRIBUTING.md)** — how to file feedback that's actually useful
 - **[CHANGELOG.md](./CHANGELOG.md)** — what's changed between revisions
