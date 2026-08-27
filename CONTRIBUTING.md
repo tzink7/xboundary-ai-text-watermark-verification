@@ -22,7 +22,7 @@ Rough labels to use if the repo has them set up: `open-question` (tracking an it
 ## Before filing
 
 - Skim open issues and PRs for something that already covers it.
-- If your change touches a section number (adding, removing, or reordering a section), the cross-references elsewhere in the document need to stay accurate. Run `python3 tools/section_ref_checker.py draft-zink-xboundary-ai-text-watermark-verification-00.md` first — it flags references pointing at section numbers that no longer exist, and gives you a side-by-side view of every other reference so you can catch the ones that point at the *wrong* (but still existing) section. This has caught real bugs in earlier revisions; it's optional but recommended.
+- If your change touches a section number (adding, removing, or reordering a section), the cross-references elsewhere in the document need to stay accurate. Run `python3 section_ref_checker.py draft-zink-xboundary-ai-text-watermark-verification-00.md` first — it flags references pointing at section numbers that no longer exist, and gives you a side-by-side view of every other reference so you can catch the ones that point at the *wrong* (but still existing) section. This has caught real bugs in earlier revisions; it's optional but recommended.
 
 ## Conventions worth keeping consistent
 
