@@ -17,7 +17,9 @@ Borrow the architecture email already used to solve a version of this problem: D
 ## Read this first
 
 - **[Full draft](./draft-zink-xboundary-ai-text-watermark-verification-00.md)** — the specification itself
+- [DNS-Based Framework for Cross-Organization Verification of AI-Generated Text Watermarks](https://docs.google.com/presentation/d/1ezyFW0LdVhTZ_UWJN1bCy3xGd1ajZ2QLacJlaD-82dg/edit?usp=sharing) (slide deck)
 - **Plain-English companion** — [zinksthinks.substack.com](https://zinksthinks.substack.com) (coming soon)
+- YouTube video explainer - Cross-organization verification of AI-generated Text watermarks (Coming soon)
 - **[CONTRIBUTING.md](./CONTRIBUTING.md)** — how to file feedback that's actually useful
 - **[CHANGELOG.md](./CHANGELOG.md)** — what's changed between revisions
 
@@ -45,10 +47,6 @@ The full list is in [Section 14](./draft-zink-xboundary-ai-text-watermark-verifi
 ## Status of this memo
 
 This is a draft submitted for discussion and stress-testing. It is not affiliated with, endorsed by, or representative of any AI provider named as an example. References to specific companies describe publicly reported behavior as of the writing date and are used only to ground the proposal in current practice.
-
-## Additional explainers
-* [DNS-Based Framework for Cross-Organization Verification of AI-Generated Text Watermarks](https://docs.google.com/presentation/d/1ezyFW0LdVhTZ_UWJN1bCy3xGd1ajZ2QLacJlaD-82dg/edit?usp=sharing) (slide deck)
-* YouTube video explainer - Cross-organization verification of AI-generated Text watermarks (Coming soon)
 
 ## License
 
