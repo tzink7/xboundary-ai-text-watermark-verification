@@ -216,3 +216,23 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------------------------------------------------------------------------
+# Project-specific: NEVER commit key material or local test artifacts
+# ---------------------------------------------------------------------------
+*.pem
+*.der
+*.record.txt
+*.desc.json
+desc*.json
+*.wm.txt
+signed.txt
+
+# demo server signing keys (dedicated throwaway keys -- still never commit)
+demo/keys/*
+!demo/keys/.gitkeep
+!demo/keys/README.md
+
+# macOS / editors
+.DS_Store
+*.swp
