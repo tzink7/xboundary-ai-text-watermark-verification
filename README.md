@@ -31,7 +31,10 @@ Borrow the architecture email already used to solve a version of this problem: D
 | `README.md` | This file |
 | `CONTRIBUTING.md` | How to file issues and PRs against the draft |
 | `CHANGELOG.md` | Revision history |
-| `section_ref_checker.py` | Catches cross-reference drift when section numbers change on revision (optional, no dependencies beyond the Python standard library) |
+| `tools/watermark_dns_tool.py` | Build, lint, and traverse `_watermark-text` DNS records; generate key pairs, `d=` custody descriptors, and `dh=` digests. Standard library only (shells out to `openssl` and `dig`) |
+| `tools/tzsataitw.py` | A **toy** asymmetric text watermark (zero-width-character and homoglyph channels) for exercising the publish-key-in-DNS / verify-across-organizations loop end to end. Not a real watermarking scheme — a test fixture for the draft's mechanics |
+| `tools/section_ref_checker.py` | Catches cross-reference drift when section numbers change on revision (optional, no dependencies beyond the Python standard library) |
+| `tools/sample.txt`, `tools/sample.watermark.1.txt` | Sample plain and watermarked text used by the tools' examples |
 
 ## Where the draft is honest about its own gaps
 
