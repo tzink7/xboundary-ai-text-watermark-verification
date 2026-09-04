@@ -32,9 +32,16 @@ Borrow the architecture email already used to solve a version of this problem: D
 | `CONTRIBUTING.md` | How to file issues and PRs against the draft |
 | `CHANGELOG.md` | Revision history |
 | `tools/watermark_dns_tool.py` | Build, lint, and traverse `_watermark-text` DNS records; generate key pairs, `d=` custody descriptors, and `dh=` digests. Standard library only (shells out to `openssl` and `dig`) |
-| `tools/tzsataitw.py` | A **toy** asymmetric text watermark (zero-width-character and homoglyph channels) for exercising the publish-key-in-DNS / verify-across-organizations loop end to end. Not a real watermarking scheme — a test fixture for the draft's mechanics |
+| `tools/tzsataitw.py` | An asymmetric text watermark (zero-width-character and homoglyph channels). Steganographic and short-text-capable, but trivially removed by text normalization — the complement to a statistical scheme, not a replacement |
+| `tools/fairoze.py` | Verifier for `fairoze-1` — the [Fairoze23] publicly-detectable construction (Ed25519 variant). `--verify` a piece of text against a key from a file or DNS. Needs `reedsolo` (`tools/requirements.txt`) |
+| `tools/fairoze_profile.py` | The `fairoze-1` parameter set — the shared contract between the verifier and the generator |
+| `tools/fairoze_demo_edits.py` | Builds the two `fairoze-1` robustness-demo samples (one edit survives, one does not) |
 | `tools/section_ref_checker.py` | Catches cross-reference drift when section numbers change on revision (optional, no dependencies beyond the Python standard library) |
 | `tools/sample.txt`, `tools/sample.watermark.1.txt` | Sample plain and watermarked text used by the tools' examples |
+| `tests/` | Test suites for the `fairoze-1` verifier (`python tests/test_fairoze_*.py`) |
+| `samples/fairoze-1/` | Real `fairoze-1` watermarked passages, plus the public key and the DNS record they verify against |
+| `colab/` | How to generate a `fairoze-1` watermark: a diff against the reference implementation (BLS → Ed25519) and Google Colab walkthroughs |
+| `implementation-open-questions.md` | Working notes on gaps and contradictions found while building the tooling — seed document for an implementation/considerations working group. Not part of the draft |
 
 ## Where the draft is honest about its own gaps
 
