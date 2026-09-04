@@ -87,8 +87,12 @@ KNOWN_ALGORITHMS = {
     "fairoze-1": "publicly-detectable watermarking [Fairoze23], Ed25519-signature "
                  "variant -- the asymmetric scheme this draft is designed around "
                  "(Section 4.1); verify with tools/fairoze.py",
-    "tzsataitw-1": "toy asymmetric watermark, zero-width channel -- see tools/tzsataitw.py",
-    "tzsataitw-2": "toy asymmetric watermark, look-alike-letter channel -- see tools/tzsataitw.py",
+    "tzsataitw-1": "steganographic short-text watermark, zero-width channel -- "
+                   "the sanctioned short-text option (no length floor), but "
+                   "trivially removed by text normalization; see tools/tzsataitw.py",
+    "tzsataitw-2": "steganographic short-text watermark, look-alike-letter channel -- "
+                   "same tradeoffs as tzsataitw-1, needs a longer paragraph "
+                   "(~1600 chars); see tools/tzsataitw.py",
 }
 
 
