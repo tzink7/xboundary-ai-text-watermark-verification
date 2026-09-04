@@ -100,6 +100,8 @@ header .sub code { font-size: .88em; }
   background: var(--warn); color: #fff; font: 700 12px/1 var(--sans);
 }
 .callout strong { color: var(--ink); }
+.callout p { margin: 0 0 8px; }
+.callout p:last-child { margin-bottom: 0; }
 
 /* ------------------------------------------------------------------ nav */
 nav {

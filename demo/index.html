@@ -17,17 +17,20 @@
     <p class="sub">This demo allows you to do the following: (a) Watermark a piece of text, (b) verify it against a key published in DNS,
       (c) build a <code>_watermark-text</code> DNS record containing a public key, or (d) lint (verify the syntax) of every record a domain publishes.</p>
     <div class="callout">
-      <div><strong>Two algorithms for demonstration purposes.</strong> <code>tzsataitw-1</code> (zero-width characters)
+      <div>
+        <p><strong>Two algorithms for demonstration purposes.</strong> <code>tzsataitw-1</code> (zero-width characters)
         and <code>tzsataitw-2</code> (look-alike letters) are steganographic short-text marks
         &mdash; easily stripped by normalisation, but they demonstrate that you can put a signature into a piece of text that can be verified
-        with a public key.<p><strong>One algorithm for actual watermarking.</strong> <code>fairoze-1</code> is the
+        with a public key.</p>
+        <p><strong>One algorithm for actual watermarking.</strong> <code>fairoze-1</code> is the
         publicly-detectable [Fairoze23] construction (Ed25519 variant) &mdash; unforgeable, but
-        needs ~700+ words and breaks on almost any edit; its samples here are pre-generated, you cannot paste in your own text. That is, 
+        needs ~700+ words and breaks on almost any edit; its samples here are pre-generated, you cannot paste in your own text. That is,
         the text was independently generated using an open-weight model, and the watermark invisibly inserted at that time. It's a computationally
-        expensive process which is why it's not done on-the-fly in this demo.
+        expensive process which is why it's not done on-the-fly in this demo.</p>
         <p>All three demonstrate the same asymmetric verify-via-DNS loop. Signing uses dedicated
-        demo keys. In real life, you'd generate your own public/private key pairs, publish your public key in a DNS record, and keep your private 
-        key secret and sign with it.</div>
+        demo keys. In real life, you'd generate your own public/private key pairs, publish your public key in a DNS record, and keep your private
+        key secret and sign with it.</p>
+      </div>
     </div>
   </div>
 </header>
