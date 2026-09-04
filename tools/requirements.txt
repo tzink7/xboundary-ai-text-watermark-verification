@@ -1,0 +1,11 @@
+# tools/ is standard-library-only EXCEPT for fairoze.py's Reed-Solomon step.
+#
+#   watermark_dns_tool.py   -- stdlib only (shells to openssl, dig)
+#   tzsataitw.py            -- stdlib only (shells to openssl, dig)
+#   section_ref_checker.py  -- stdlib only
+#   fairoze.py              -- stdlib + reedsolo (below), shells to openssl
+#
+# Install into a venv (the system Python is usually externally managed):
+#   python3 -m venv .venv && .venv/bin/pip install -r tools/requirements.txt
+
+reedsolo >= 1.7, < 2.0    # same library the reference implementation uses

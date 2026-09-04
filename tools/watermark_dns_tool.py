@@ -84,8 +84,9 @@ DESCRIPTOR_REQUIRED_FIELDS = ["received_from", "selector", "provider", "c", "ts"
 # There is no IANA "a=" registry yet (Section 15). This is the local stand-in --
 # the algorithm ids this toolchain recognizes:
 KNOWN_ALGORITHMS = {
-    "fairoze-1": "publicly-detectable watermarking [fairoze23] -- the asymmetric "
-                 "scheme this draft is designed around (Section 4.1)",
+    "fairoze-1": "publicly-detectable watermarking [Fairoze23], Ed25519-signature "
+                 "variant -- the asymmetric scheme this draft is designed around "
+                 "(Section 4.1); verify with tools/fairoze.py",
     "tzsataitw-1": "toy asymmetric watermark, zero-width channel -- see tools/tzsataitw.py",
     "tzsataitw-2": "toy asymmetric watermark, look-alike-letter channel -- see tools/tzsataitw.py",
 }
