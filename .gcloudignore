@@ -1,0 +1,18 @@
+# What `gcloud run deploy --source .` uploads to Cloud Build.
+# If this file exists, gcloud uses ONLY it (not .gitignore), so be explicit.
+
+.git/
+.gitignore
+.dockerignore
+
+**/__pycache__/
+**/*.pyc
+**/.DS_Store
+
+# NEVER upload private keys to the build
+demo/keys/*.pem
+demo/keys/*.der
+**/*.private.pem
+
+*.record.txt
+*.desc.json

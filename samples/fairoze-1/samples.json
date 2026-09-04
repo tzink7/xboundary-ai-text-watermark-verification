@@ -1,0 +1,19 @@
+{
+  "algorithm": "fairoze-1",
+  "locator": "3._watermark-text.demo.terryzink.com",
+  "pubkey_file": "fairoze-1.pub",
+  "samples": [
+    { "file": "sample-01.txt", "title": "Pickleball — origins, culture, and the rules" },
+    { "file": "sample-02.txt", "title": "The history and culture of coffee" },
+    { "file": "sample-03.txt", "title": "Why so many cities grew up along rivers" },
+    { "file": "sample-04.txt", "title": "The appeal of long-distance hiking" },
+    { "file": "sample-05.txt", "title": "How board games evolved over the centuries" },
+    { "file": "sample-06.txt", "title": "The economics of the second-hand book market" },
+    { "file": "sample-07.txt", "title": "What makes a good public library" },
+    { "file": "sample-08.txt", "title": "The rise of amateur astronomy as a hobby" },
+    { "file": "sample-09.txt", "title": "Bread baking at home" },
+    { "file": "sample-10.txt", "title": "The social history of the bicycle" },
+    { "file": "sample-01-edited-tail.txt", "title": "Sample 1, one character changed at the end (still verifies — RS absorbs it)" },
+    { "file": "sample-01-edited-early.txt", "title": "Sample 1, one character changed near the start (breaks — chained-hash cascade)" }
+  ]
+}

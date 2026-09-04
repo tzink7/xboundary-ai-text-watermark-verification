@@ -1,0 +1,12 @@
+# keep private keys out of the image no matter what
+demo/keys/*.pem
+demo/keys/*.der
+**/*.private.pem
+
+**/__pycache__/
+**/*.pyc
+**/.DS_Store
+.git/
+.gitignore
+*.record.txt
+*.desc.json
