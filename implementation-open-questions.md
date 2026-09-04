@@ -6,6 +6,13 @@
 Steps 1-4). To be triaged later — some items belong in §14 (open questions), some
 in §6/§7 as normative text, some in §13 (future expansion).
 
+**2026-09-04:** Sections A and B, and D2, are now resolved into the draft --
+each item below is marked **RESOLVED** with a pointer to where. C, D1/D3/D4/D5,
+E, and F remain open by design: C is implementation choices worth noting but not
+a spec conflict, D1/D3/D4/D5 are `fairoze-1`-specific and belong in a future
+per-algorithm registry entry rather than core draft text, E is a project/demo
+decision rather than draft text, and F is unbuilt working-group seed material.
+
 Section references are to
 `draft-zink-xboundary-ai-text-watermark-verification-00.md`.
 
@@ -24,6 +31,8 @@ Section references are to
   express — e.g. "MUST NOT sign new text under this selector, but text already
   signed inside its `nb`/`na` window still verifies" (a soft-retire distinct from
   both ordinary rotation and hard revocation).
+- **RESOLVED (2026-09-04):** dropped "(or s=deprecated)" from §9.2's Key
+  Lifecycle bullet. `s=` is `active`/`revoked` only, consistently.
 
 ### A2. Unrecognized `a=` — MUST vs SHOULD
 - §6.1: an unregistered/unrecognized `a=` **"MUST cause a verifier to treat the
@@ -35,6 +44,10 @@ Section references are to
   reject the record; the draft should also acknowledge that no verifier can have
   a complete registry until the IANA registry (§15) exists, so "unrecognized"
   is under-defined in the interim.
+- **RESOLVED (2026-09-04):** §6.1 now says SHOULD, matching §15 -- one
+  normative level. §15 also gained an explicit carve-out: a verifier MAY treat
+  an unrecognized `a=` as usable when experimenting with a new algorithm
+  (one's own, or someone else's) to test end-to-end functionality.
 
 ---
 
@@ -52,6 +65,9 @@ invisible characters.
   framework, or state explicitly that each `a=` registration defines its own and
   that a verifier MUST apply it before detection. Every concrete scheme needs
   this; leaving it unstated makes any two implementations non-interoperable.
+- **RESOLVED (2026-09-04):** §6.1, right after the `a=` paragraph -- each `a=`
+  registration defines its own canonicalization, and a verifier MUST apply it
+  before detection (the second option above).
 
 ### B2. Source of the "text generation timestamp" — undefined
 - §9.2: "Verifiers **MUST** evaluate text generation timestamps against these
@@ -65,6 +81,15 @@ invisible characters.
 - **Resolution needed:** define where the timestamp comes from (watermark
   payload? out-of-band metadata? not available?), downgrade the MUST, or list it
   as an explicit §14 open question.
+- **RESOLVED (2026-09-04):** sidesteps the undefined source entirely -- §9.2 now
+  evaluates `nb=`/`na=` against the current time *at the moment of verification*
+  ("time of detection"), not a generation timestamp nothing ever carried. §6.1's
+  rationale for the window and §7.5's worked example were both reworded to match
+  (they previously argued for the opposite, generation-time model -- a second,
+  newly-introduced contradiction caught and fixed in the same pass). Tradeoff
+  worth remembering: legitimately-generated text can now fail verification if
+  checked after its key's `na` has passed, even though it was signed while the
+  key was active -- a deliberate choice, not an oversight.
 
 ### B3. HTTP redirects on the `d=` fetch — unspecified
 - §7.2.2: "Perform an HTTP GET ... Compute the digest of the exact raw response
@@ -77,6 +102,9 @@ invisible characters.
 - **Resolution needed:** state whether redirects are followed, a hop cap, and
   that `dh=` covers the final response. Intersects §9.4 (descriptor tampering /
   SSRF surface) and §B.4 (HTTP-origin fragility).
+- **RESOLVED (2026-09-04):** §7.2.2 now says redirects are permitted, with no
+  mandated cap but "a reasonable starting point is no more than 5" -- matching
+  what the tooling already does.
 
 ### B4. `dh=` encoding — padding and alphabet not nailed down
 - §6.1: "modeled after the W3C Subresource Integrity / SRI syntax" (SRI uses
@@ -86,6 +114,15 @@ invisible characters.
   default (`--no-pad` to strip).
 - **Resolution needed:** pick exactly one alphabet and one padding rule. Two
   implementations disagreeing on padding fail every digest comparison.
+- **RESOLVED (2026-09-04):** §6.1 now specifies Base64URL **without** padding
+  (RFC4648 §3.2) -- padding is unnecessary once each tag's value is already
+  delimited by `;`, and dropping it avoids an `=` inside a `tag=value;` grammar
+  that already uses `=` as its own delimiter. Generator SHOULD omit padding;
+  verifier MUST accept either way, since existing tooling has been inconsistent.
+  **Follow-up not yet done:** `compute_dh()` in `watermark_dns_tool.py` still
+  defaults to `pad=True` (padded), which now disagrees with the spec's SHOULD --
+  worth flipping the default, or at least noting it, before this ships anywhere
+  that matters.
 
 ### B5. `d=` descriptor JSON value types — unstated
 - The draft's own examples show `"selector": "2"` and `"ts": "1785542400"` as
@@ -93,6 +130,9 @@ invisible characters.
 - **Implementation:** the parser accepts string or number for both `selector`
   and `ts`.
 - **Resolution needed:** state the JSON type of each field in the §7.2.1 schema.
+- **RESOLVED (2026-09-04):** both `selector` and `ts` in the example schema now
+  state "a literal number, either with or without double-quotes" -- a verifier
+  MUST accept both forms for either field.
 
 ### B6. No verifier-side cap on the no-`r=` crawl
 - §6.4 step 3 / §13 acknowledge the cost of "crawl until a query returns no
@@ -103,6 +143,11 @@ invisible characters.
 - **Resolution needed:** the draft should say a verifier MAY impose a sane cap,
   and that a provider past some selector count MUST publish `r=`. Defends against
   a hostile or misconfigured seed-list domain answering for a huge selector range.
+- **RESOLVED (2026-09-04):** §6.4 step 3 now says a verifier MAY cap the no-`r=`
+  crawl, suggests 50 as a starting point, and that a provider past that count
+  MUST publish `r=`. **Not reconciled:** the spec's example number (50) and the
+  demo/CLI's actual `MAX_VERIFY_CRAWL` (10) now disagree; the spec doesn't
+  mandate a number so it's not a bug, just worth aligning eventually.
 
 ### B7. "Try each cached key" assumes a cryptographic detector, not a statistical one
 - §14 already flags the aggregate false-positive problem for §6.4 step 5.
@@ -113,6 +158,12 @@ invisible characters.
 - **Resolution needed:** make explicit that any N-key verification loop inherits
   the multiple-hypothesis-testing problem and that a statistical detector must
   adjust its threshold accordingly.
+- **RESOLVED (2026-09-04):** §6.4 step 5 now states this explicitly, scoped
+  correctly -- it does NOT apply to an exact cryptographic check (Ed25519), only
+  to a statistical/threshold detector, which MUST account for the aggregate
+  false-positive rate as the cached key set grows. The "how to compute the
+  adjustment" question is left where it was, at the existing §14 bullet, which
+  §6.4 now cross-references rather than duplicating.
 
 ---
 
@@ -146,6 +197,13 @@ exercise the §6/§7 DNS + custody machinery end to end. Its frame format
 
 ## D. From implementing `fairoze-1` (2026-09-03)
 
+D1, D3, D4, D5 are `fairoze-1`-specific implementation notes -- mask
+construction, chained-hash fragility, offset-search convention -- and belong in
+a future `fairoze-1` (or `fairoze-2`) IANA registry entry, not core draft text;
+confirmed 2026-09-04, left open by design. D2 is the exception: it's a general
+principle about how *any* `a=` registration works, not fairoze-specific, so it
+was pulled out and added to the draft -- see below.
+
 ### D1. `p=` is not algorithm-neutral (Ed25519 chosen partly to sidestep this)
 The reference Fairoze impl signs with BLS on a pairing curve (`bplib`/`petlib`).
 BLS12-381 / BN256 public keys have no `openssl`-parseable SPKI, so §6.1's "base64
@@ -165,6 +223,10 @@ resolves this the TLS-cipher-suite way — the `a=` token fully specifies every
 constant, so recognizing `fairoze-1` is sufficient. The draft should state that
 `a=` values are fully-specified parameter sets, not bare scheme names (kills the
 need for a `pp=` tag).
+
+**RESOLVED (2026-09-04):** added to §15's registry-entry paragraph -- each `a=`
+identifier names a complete, versioned parameter set; a verifier that
+recognizes the identifier needs no side channel beyond it plus `p=`.
 
 ### D3. Mask length bug in the reference, inherited if copied naively
 `crypto.sign_and_encode_openssl` masks the codeword with `sha512(digest)` via
@@ -246,16 +308,17 @@ mechanism, so this is a real, usable pairing — not a stand-in.
 | hidden from a byte inspector | yes | **no** |
 
 **Actions:**
-- The demo page currently labels `tzsataitw-*` "Toy algorithms" in a callout.
-  Change that copy: present both mechanisms with this table's tradeoffs, so a
-  visitor understands *why* there are two and when each applies. (Step 10.)
+- ~~The demo page currently labels `tzsataitw-*` "Toy algorithms" in a
+  callout.~~ **DONE** — demo callout now presents both mechanisms and their
+  tradeoffs (Step 10).
 - Revisit the earlier suggestion (A/§15 note) to relegate `tzsataitw-*` to an
   `x-` / experimental `a=` prefix — if it is the sanctioned short-text option it
   arguably deserves a normal identifier, still with the strippability caveat in
-  its registry description.
-- `watermark_dns_tool.py` `KNOWN_ALGORITHMS` descriptions and the
-  `tzsataitw-algorithm` project note both say "toy" — update to "steganographic
-  short-text option; trivially removed by text normalization".
+  its registry description. **Still open — not decided either way.**
+- ~~`watermark_dns_tool.py` `KNOWN_ALGORITHMS` descriptions and the
+  `tzsataitw-algorithm` project note both say "toy"~~ **DONE (2026-09-04)** —
+  `KNOWN_ALGORITHMS` for `tzsataitw-1`/`tzsataitw-2` now say "steganographic
+  short-text watermark ... trivially removed by text normalization".
 
 ---
 
