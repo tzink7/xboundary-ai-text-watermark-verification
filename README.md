@@ -41,6 +41,7 @@ Borrow the architecture email already used to solve a version of this problem: D
 | `tests/` | Test suites for the `fairoze-1` verifier (`python tests/test_fairoze_*.py`) |
 | `samples/fairoze-1/` | Real `fairoze-1` watermarked passages, plus the public key and the DNS record they verify against |
 | `colab/` | How to generate a `fairoze-1` watermark: a diff against the reference implementation (BLS → Ed25519) and Google Colab walkthroughs |
+| `demo/` | A live web sandbox for the tools above (watermark, verify, build a record, validate a domain) — [xboundary-demo-56jlfjjidq-uc.a.run.app](https://xboundary-demo-56jlfjjidq-uc.a.run.app), running on Google Cloud Run. `demo/DEPLOY.md` covers redeploying it |
 | `implementation-open-questions.md` | Working notes on gaps and contradictions found while building the tooling — seed document for an implementation/considerations working group. Not part of the draft |
 
 ## Where the draft is honest about its own gaps
