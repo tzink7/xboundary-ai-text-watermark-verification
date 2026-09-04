@@ -85,7 +85,7 @@ header h1 {
   margin: 0 0 10px; font-size: 30px; line-height: 1.15; font-weight: 680;
   letter-spacing: -0.022em;
 }
-header .sub { margin: 0; max-width: 60ch; color: var(--ink-soft); font-size: 15.5px; }
+header .sub { margin: 0; max-width: 80ch; color: var(--ink-soft); font-size: 15.5px; }
 header .sub code { font-size: .88em; }
 
 .callout {
@@ -140,10 +140,10 @@ main { padding-bottom: 90px; }
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
 .card.hidden { display: none; }
 .card h2 { margin: 0 0 6px; font-size: 19px; font-weight: 650; letter-spacing: -0.018em; }
-.card .lede { margin: 0 0 22px; color: var(--ink-soft); font-size: 13.5px; max-width: 62ch; }
+.card .lede { margin: 0 0 22px; color: var(--ink-soft); font-size: 13.5px; }
 .card .lede code { font-size: .9em; }
 .card .lede-list {
-  margin: -12px 0 22px; padding-left: 20px; max-width: 62ch;
+  margin: -12px 0 22px; padding-left: 20px; max-width: 90ch;
   color: var(--ink-soft); font-size: 13px; line-height: 1.6;
 }
 .card .lede-list li { margin: 3px 0; }
