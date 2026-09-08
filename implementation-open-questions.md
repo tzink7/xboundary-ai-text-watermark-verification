@@ -184,12 +184,16 @@ invisible characters.
   avoid. **Existing asymmetric records need no change** (`k=` optional for them).
   `nb=`'s tag definition also fixed here -- it still said "valid when the text
   was generated", a leftover the B2 pass missed.
-- **Still open:** the `d=` tag is specced for `c=re-sign` custody descriptors
-  (§7.2); using it to also carry a symmetric scheme's `verify` endpoint + params
-  overloads it. Either broaden `d=` to "supplementary JSON for this record" or
-  add a distinct tag. And the layered zero-width + `synthid-1` composition (a
-  signed `tzsataitw` manifest pointing at the inner symmetric record) is F2
-  territory, being designed -- not in the draft yet.
+- **`d=` broadened (2026-09-08, same commit follow-up):** §6.1's `d=` now
+  defines two documents, disambiguated by the record's other tags -- (a) the
+  Section 7.2 custody descriptor for a cross-vendor `c=re-sign`, (b) the
+  verification document for a `k=symmetric` scheme (schema defined by the `a=`
+  registration; MUST name a `verify` endpoint + the canonicalization). A record
+  that is both carries both field sets. §7.2's opening now says it covers case
+  (a) only.
+- **Still open:** the layered zero-width + `synthid-1` composition (a signed
+  `tzsataitw` manifest pointing at the inner symmetric record) is F2 territory,
+  being designed -- not in the draft yet.
 
 ---
 
