@@ -327,6 +327,36 @@ def _check_dns(domain: str, selector: int) -> dict:
 
 def cmd_verify(args) -> int:
     cfg = load_config(args.config, args.keys)
+
+    # --input may be a glob / directory: verify many files with ONE model load
+    # (importing torch + loading the tokenizer is ~10 s; the detection itself is
+    # milliseconds, so a per-file re-invocation is almost all startup cost).
+    paths = []
+    if args.input and args.input != "-":
+        if os.path.isdir(args.input):
+            paths = sorted(glob.glob(os.path.join(args.input, "*.txt")))
+        else:
+            paths = sorted(glob.glob(args.input)) or [args.input]
+
+    if len(paths) > 1:
+        tokenizer, processor = _load_everything(cfg)
+        rows, worst = [], 0
+        for p in paths:
+            with open(p, "r", encoding="utf-8") as fh:
+                r = verify_text(fh.read(), cfg, tokenizer=tokenizer, processor=processor)
+            r["file"] = os.path.basename(p)
+            rows.append(r)
+            worst = max(worst, 0 if r.get("verified") else 2)
+        if args.json:
+            print(json.dumps(rows, indent=2))
+        else:
+            for r in rows:
+                v = "WATERMARKED " if r.get("verified") else "not detected"
+                s = f"{r['score']:.4f}" if r.get("score") is not None else "  --  "
+                print(f"  {v}  {s}  {r['file']}")
+            print(f"  threshold {cfg.get('threshold')}  ({len(rows)} files)")
+        return worst
+
     text = _read_input(args.input)
     res = verify_text(text, cfg)
 
