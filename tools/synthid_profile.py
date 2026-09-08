@@ -96,6 +96,13 @@ DEFAULT_FPR = 1e-2
 # better than fairoze-1. canonicalize() here does the same minimal copy/paste
 # repair as fairoze_profile.canonicalize() and nothing more -- no NFC, no
 # whitespace collapsing (those would re-tokenize differently).
+#
+# NOTE: draft Section 6.6 defines the `d=` verification document's
+# `canonicalization` array as ["strip-zero-width", "nfc", "trim"] -- what an
+# EXTERNAL verifier applies before POSTing to the `verify` endpoint, and the
+# step that makes a layered zero-width + synthid-1 mark work. That is a superset
+# of what this bare-verifier canonicalize() does. Fine while synthid-1 is used
+# un-layered (the demo samples); reconcile the two if layering ships.
 
 _BOM = "﻿"
 
@@ -142,7 +149,7 @@ DNS_RECORD_EXAMPLE = (
 D_DOCUMENT_EXAMPLE = {
     "algorithm": ALGORITHM_ID,
     "verify": "https://demo.terryzink.com/watermark/verify",
-    "canonicalization": "strip U+200B/U+200C/U+200D/U+2060, then NFC, then trim",
+    "canonicalization": ["strip-zero-width", "nfc", "trim"],   # draft §6.6 tokens
     "key_model": "symmetric",
     "detector": DETECTOR,
     "tokenizer": "Qwen/Qwen2.5-3B-Instruct",
