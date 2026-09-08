@@ -221,15 +221,16 @@
   <!-- (d) ------------------------------------------------------------------- -->
   <section class="card hidden" id="tab-lint">
     <h2>Validate a domain</h2>
-    <p class="lede">Crawls <code>1._watermark-text.&lt;domain&gt;</code> onward (following
-      <code>r=</code>), lints every selector against the draft's rules, and fetches each
-      <code>d=</code> document over HTTPS to check its hash and schema.</p>
+    <p class="lede">With no selector, crawls <code>1._watermark-text.&lt;domain&gt;</code> onward
+      (following <code>r=</code>) and lints every selector. Name a <strong>selector</strong> to
+      check just that one record &mdash; no crawl. Either way each <code>d=</code> document is
+      fetched over HTTPS and checked for hash and schema.</p>
 
     <div class="row">
       <div><label for="l-domain">Domain</label>
         <input type="text" id="l-domain" placeholder="terryzink.com" autocapitalize="off" autocorrect="off" spellcheck="false"></div>
-      <div><label for="l-at">Evaluate validity at <span class="hint">optional: unix ts or ISO date</span></label>
-        <input type="text" id="l-at" placeholder="now"></div>
+      <div><label for="l-selector">Selector <span class="hint">optional &mdash; pins one record, skips the crawl</span></label>
+        <input type="number" id="l-selector" min="1" placeholder="crawl from 1"></div>
     </div>
 
     <button class="go" id="l-go">Validate</button>

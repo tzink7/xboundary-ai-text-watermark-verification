@@ -681,9 +681,35 @@ def api_make_record(body):
 # (d) validate a domain's records                                              #
 # --------------------------------------------------------------------------- #
 
+def _lint_one_selector(domain, selector, at_ts):
+    """traverse_provider()-shaped result for a single named selector -- no crawl.
+    Lets the caller name one record to check instead of walking from selector 1."""
+    name = wdt.selector_name(selector, domain)
+    cname = wdt.dig_cname(name)
+    status, ad = wdt.dig_status(name)
+    records = wdt.dig_txt(name)
+    selectors = collections.OrderedDict()
+    notes = []
+    if not records:
+        notes.append(f"{name}: no TXT record (DNS status {status}).")
+        return {"selectors": selectors, "r": None,
+                "stopped_because": f"selector {selector} only (no record)", "notes": notes}
+    rec = records[0]
+    if len(records) > 1:
+        notes.append(f"selector {selector}: {len(records)} TXT records present; "
+                     f"using the first, flagging the rest")
+    f = wdt.lint_record(rec, selector=selector, domain=domain, fetch_d=True, at_time=at_ts)
+    selectors[selector] = {"name": name, "cname": cname, "record": rec, "dnssec_ad": ad,
+                           "findings": f, "usable": wdt.record_usable(rec, at_ts)}
+    return {"selectors": selectors, "r": None,
+            "stopped_because": f"selector {selector} only (not crawled)", "notes": notes}
+
+
 def api_lint_domain(body):
     domain = (body.get("domain") or "").strip().rstrip(".")
     at = body.get("at")
+    sel = body.get("selector")
+    sel = None if sel in (None, "", "null") else sel
     if not DOMAIN_RE.match(domain):
         return 400, {"error": f"that does not look like a domain: {domain!r}"}
     at_ts = None
@@ -692,8 +718,18 @@ def api_lint_domain(body):
             at_ts = wdt.parse_ts(at)
         except ValueError as exc:
             return 400, {"error": str(exc)}
+    if sel is not None:
+        try:
+            sel = int(sel)
+        except (TypeError, ValueError):
+            return 400, {"error": "selector must be a number"}
+        if not (1 <= sel <= 100000):
+            return 400, {"error": "selector out of range"}
 
-    res = wdt.traverse_provider(domain, max_selectors=MAX_SELECTORS, fetch_d=True, at_time=at_ts)
+    if sel is not None:
+        res = _lint_one_selector(domain, sel, at_ts)
+    else:
+        res = wdt.traverse_provider(domain, max_selectors=MAX_SELECTORS, fetch_d=True, at_time=at_ts)
     selectors = {}
     tot_err = tot_warn = 0
     for n, e in res["selectors"].items():

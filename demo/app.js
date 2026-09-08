@@ -451,16 +451,17 @@ $("l-go").addEventListener("click", async () => {
   if (!$("l-domain").value.trim()) { showErr($("l-err"), "enter a domain"); return; }
   btn.disabled = true; btn.textContent = "crawling…";
   try {
+    const selRaw = $("l-selector").value.trim();
     const r = await post("/api/lint-domain", {
       domain: $("l-domain").value.trim(),
-      at: $("l-at").value.trim() || null,
+      selector: selRaw === "" ? null : selRaw,
     });
     kv($("l-summary"), [
       ["domain", r.domain],
-      ["selectors seen", r.selectors_seen],
+      [selRaw ? "selector" : "selectors seen", selRaw || r.selectors_seen],
       ["r= declared", r.r == null ? "—" : r.r],
       ["totals", `${r.errors} error(s), ${r.warnings} warning(s)`],
-      ["crawl stopped", r.stopped_because],
+      [selRaw ? "scope" : "crawl stopped", r.stopped_because],
     ]);
 
     const box = $("l-selectors"); box.innerHTML = "";
