@@ -306,6 +306,9 @@ pre.report {
 .findings .ERROR { color: var(--err); }   .findings .ERROR::before { background: var(--err); }
 .findings .WARN  { color: var(--warn); }  .findings .WARN::before  { background: var(--warn); }
 .findings .INFO  { color: var(--ink-soft); }
+.findings .OK    { color: var(--ok); }    .findings .OK::before    { background: var(--ok); }
+.findings .head  { color: var(--ink); font-weight: 600; }
+.findings .head::before { background: transparent; }
 
 .hint {
   color: var(--ink-faint); font: 400 11.5px/1.5 var(--sans); letter-spacing: 0;

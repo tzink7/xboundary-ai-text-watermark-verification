@@ -350,6 +350,70 @@ $("wm-copy").addEventListener("click", async () => {
 });
 
 /* ---- (b) verify ----------------------------------------------------------- */
+function renderManifest(r) {
+  const vd = $("v-verdict");
+  const o = r.outer || {};
+  const inner = r.marks || [];
+  const innerOk = o.verified && inner.length && inner.every((m) => m.verified === true);
+
+  if (o.detail) {
+    vd.className = "verdict warn"; vd.textContent = "COULD NOT VERIFY";
+  } else if (!o.signature_ok) {
+    vd.className = "verdict err"; vd.textContent = "MANIFEST INVALID — signature does not verify";
+  } else if (!o.verified) {
+    vd.className = "verdict err";
+    vd.textContent = "REJECTED — " + (o.algorithm_mismatch || "the record disagrees");
+  } else if (innerOk) {
+    vd.className = "verdict ok"; vd.textContent = "VALID — double signature";
+  } else {
+    vd.className = "verdict warn"; vd.textContent = "OUTER VALID — inner mark not verified";
+  }
+
+  kv($("v-meta"), [
+    ["type", "double signature — zero-width manifest + " + inner.map((m) => m.scheme).join(", ")],
+    ["outer signature", o.detail ? "could not check (" + o.detail + ")"
+                      : o.verified ? "VALID"
+                      : o.signature_ok ? "signature valid, but the record rejects it"
+                      : "INVALID"],
+    ["signed by", o.sig_locator],
+    ["outer record a=", o.record_algorithm || "—"],
+    ["canonical chars", r.canonical_chars],
+    ["canonical sha256", r.canonical_sha256],
+  ]);
+
+  const box = $("v-notes"); box.innerHTML = "";
+  const list = document.createElement("div"); list.className = "findings";
+  const head = document.createElement("div"); head.className = "head";
+  head.textContent = `referenced marks (${inner.length})` +
+    (o.verified ? "" : " — not followed (outer signature not valid)");
+  list.appendChild(head);
+  for (const m of inner) {
+    const d = document.createElement("div");
+    if (m.verified === true) {
+      d.className = "OK";
+      let t = `${m.scheme} @ ${m.locator}  →  VALID`;
+      if (m.score != null) t += `  (score ${m.score.toFixed(4)} ≥ ${(m.threshold || 0).toFixed(4)})`;
+      d.textContent = t;
+    } else if (m.verified === false) {
+      d.className = "ERROR";
+      d.textContent = `${m.scheme} @ ${m.locator}  →  NOT VERIFIED — ${m.detail || "failed"}`;
+    } else {
+      d.className = "INFO";
+      d.textContent = `${m.scheme} @ ${m.locator}  →  ${m.detail || m.note || "not checked"}`;
+    }
+    list.appendChild(d);
+  }
+  if (r.inner_skipped) {
+    const d = document.createElement("div"); d.className = "WARN";
+    d.textContent = r.inner_skipped;
+    list.appendChild(d);
+  }
+  box.appendChild(list);
+
+  $("v-out").classList.remove("hidden");
+  $("v-out").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
 $("v-go").addEventListener("click", async () => {
   const btn = $("v-go"); clearErr($("v-err")); $("v-out").classList.add("hidden");
   if (!$("v-text").value.trim()) { showErr($("v-err"), "paste the watermarked text to check"); return; }
@@ -362,6 +426,8 @@ $("v-go").addEventListener("click", async () => {
       domain: domain || null,
       selector: selRaw === "" ? null : selRaw,
     });
+
+    if (r.kind === "manifest") { renderManifest(r); return; }
 
     const vd = $("v-verdict");
     const alg = r.record_algorithm || r.algorithm;

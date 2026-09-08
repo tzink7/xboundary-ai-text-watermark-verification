@@ -658,6 +658,81 @@ def _watermark_record(loc):
     return None
 
 
+def _resolve_inner_mark(scheme, locator, stripped_text):
+    """One referenced mark from a manifest: resolve its DNS record, then run the
+    scheme's detector against the (zero-width-stripped) text."""
+    try:
+        recs = tz.dig_txt(locator)
+    except Exception as exc:                              # noqa: BLE001
+        return {"scheme": scheme, "locator": locator, "verified": False, "detail": str(exc)}
+    tags = next((t for t in (tz.parse_record_tags(r) for r in recs) if t.get("a")), None)
+    if tags is None:
+        return {"scheme": scheme, "locator": locator, "verified": False,
+                "detail": f"no _watermark-text record at {locator}"}
+    if tags.get("a") != scheme:
+        return {"scheme": scheme, "locator": locator, "verified": False,
+                "detail": f"record says a={tags.get('a')!r}, the manifest claims {scheme!r}"}
+    r = _verify_against_record(stripped_text, None, locator, tags)
+    r["scheme"] = scheme
+    r["locator"] = locator
+    return r
+
+
+def _verify_double_signature(text):
+    """If `text` carries a tzsataitw-1 manifest frame (double signature), verify
+    the outer signature against its sig_locator, then follow the manifest to
+    check each referenced mark. Returns (code, obj) or None (not a manifest)."""
+    mf = next((f for f in tz.extract_frames(text) if f.get("kind") == "manifest"), None)
+    if mf is None:
+        return None
+    try:
+        marks, sig_locator, sig, prefix = tz.unpack_manifest(mf["payload"])
+    except ValueError as exc:
+        return 200, {"mark_found": True, "kind": "manifest",
+                     "detail": f"manifest payload is malformed: {exc}"}
+
+    canon = tz.canonical_text(text)
+    msg = tz.manifest_signing_bytes(prefix, canon)
+    outer = {"sig_locator": sig_locator, "signature_ok": False, "verified": False,
+             "signature_hex": sig.hex()}
+    try:
+        der, tags = tz.key_der_from_dns(sig_locator)
+        outer["record_algorithm"] = tags.get("a")
+        kpath = tz._tmp(der)
+        try:
+            outer["signature_ok"] = tz.ed25519_verify(kpath, msg, sig, "DER")
+        finally:
+            try:
+                os.unlink(kpath)
+            except OSError:
+                pass
+        if tags.get("a") and not str(tags["a"]).startswith("tzsataitw"):
+            outer["algorithm_mismatch"] = (
+                f"the record at {sig_locator} publishes this key for a={tags['a']!r}, "
+                f"not a tzsataitw algorithm")
+        else:
+            outer["verified"] = outer["signature_ok"]
+    except (RuntimeError, FileNotFoundError) as exc:
+        outer["detail"] = str(exc)
+
+    result = {
+        "mark_found": True, "kind": "manifest",
+        "channel": tz.ZeroWidthChannel().summary,
+        "outer": outer,
+        "marks": [{"scheme": s, "locator": loc} for s, loc in marks],
+        "canonical_chars": len(canon),
+        "canonical_sha256": hashlib.sha256(canon.encode("utf-8")).hexdigest(),
+    }
+    if outer["verified"]:
+        stripped = tz.strip_marks(text)
+        result["marks"] = [_resolve_inner_mark(m["scheme"], m["locator"], stripped)
+                           for m in result["marks"]]
+    elif not outer.get("detail"):
+        result["inner_skipped"] = ("the outer signature did not verify -- the manifest's "
+                                   "pointers are untrusted and were not followed")
+    return 200, result
+
+
 def api_verify(body):
     text = _need_text(body)
     domain = (body.get("domain") or "").strip().rstrip(".")
@@ -673,6 +748,12 @@ def api_verify(body):
             selector = int(selector)
         except (TypeError, ValueError):
             return 400, {"error": "selector must be a number"}
+
+    # ---- a double-signature manifest is self-describing: verify it first,
+    #      domain/selector aren't needed (or used).
+    ds = _verify_double_signature(text)
+    if ds is not None:
+        return ds
 
     tz_frame = _tz_frame(text)
     canon_len = len(fzp.canonicalize(text)) if fzp else len(text)
