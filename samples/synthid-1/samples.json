@@ -1,0 +1,48 @@
+{
+  "algorithm": "synthid-1",
+  "locator": "4._watermark-text.demo.terryzink.com",
+  "config_file": "synthid-1.config.json",
+  "note": "symmetric watermark -- the demo server holds the keys; no p= in DNS",
+  "samples": [
+    {
+      "file": "sample-01.txt",
+      "title": "Pickleball"
+    },
+    {
+      "file": "sample-02.txt",
+      "title": "Coffee"
+    },
+    {
+      "file": "sample-03.txt",
+      "title": "Rivers and cities"
+    },
+    {
+      "file": "sample-04.txt",
+      "title": "Long-distance hiking"
+    },
+    {
+      "file": "sample-05.txt",
+      "title": "Board games"
+    },
+    {
+      "file": "sample-06.txt",
+      "title": "The second-hand book market"
+    },
+    {
+      "file": "sample-07.txt",
+      "title": "Public libraries"
+    },
+    {
+      "file": "sample-08.txt",
+      "title": "Amateur astronomy"
+    },
+    {
+      "file": "sample-09.txt",
+      "title": "Bread baking"
+    },
+    {
+      "file": "sample-10.txt",
+      "title": "The bicycle"
+    }
+  ]
+}

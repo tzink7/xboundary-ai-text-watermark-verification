@@ -24,14 +24,20 @@
         and <code>tzsataitw-2</code> (look-alike letters) are steganographic short-text marks
         &mdash; easily stripped by normalisation, but they demonstrate that you can put a signature into a piece of text that can be verified
         with a public key.</p>
-        <p><strong>One algorithm for actual watermarking.</strong> <code>fairoze-1</code> is the
+        <p><strong>Two algorithms for actual watermarking.</strong> <code>fairoze-1</code> is the
         publicly-detectable [Fairoze23] construction (Ed25519 variant) &mdash; unforgeable, but
-        needs ~700+ words and breaks on almost any edit; its samples here are pre-generated, you cannot paste in your own text. That is,
-        the text was independently generated using an open-weight model, and the watermark invisibly inserted at that time. It's a computationally
-        expensive process which is why it's not done on-the-fly in this demo.</p>
-        <p>All three demonstrate the same asymmetric verify-via-DNS loop. Signing uses dedicated
-        demo keys. In real life, you'd generate your own public/private key pairs, publish your public key in a DNS record, and keep your private
-        key secret and sign with it.</p>
+        needs ~700+ words and breaks on almost any edit. <code>synthid-1</code> is SynthID-Text
+        [Dathathri24], a <em>symmetric</em> statistical mark: there is no public key, so DNS
+        publishes a <code>k=symmetric</code> record whose <code>d=</code> document names a
+        <code>verify</code> endpoint the key holder runs. For both, the samples here are
+        pre-generated &mdash; the text was independently generated on an open-weight model with
+        the watermark inserted at that time. It's computationally expensive, which is why it's
+        not done on-the-fly in this demo, and you cannot paste in your own text.</p>
+        <p><code>tzsataitw-*</code> and <code>fairoze-1</code> demonstrate the asymmetric
+        verify-via-DNS loop &mdash; you'd generate your own key pair, publish the public key in a
+        DNS record, and keep the private key secret. <code>synthid-1</code> shows the symmetric
+        variant, where verification runs through the provider's own endpoint rather than a
+        public key. Signing here uses dedicated demo keys.</p>
       </div>
     </div>
   </div>
@@ -67,11 +73,11 @@
     <div id="wm-sample-row" class="hidden">
       <label for="wm-sample">Pre-generated sample</label>
       <select id="wm-sample"><option>loading&hellip;</option></select>
-      <p class="hint">These <code>fairoze-1</code> watermarks were generated once on an
-        open-weight model &mdash; the mark is spread across the whole text as a statistical
-        bias, so there is nothing to &ldquo;add&rdquo; here. This server can&rsquo;t run the
-        generator (it needs a GPU); it just serves the finished text. Take it to the
-        <strong>Verify</strong> tab with domain <code>demo.terryzink.com</code>.</p>
+      <p class="hint">These <code>fairoze-1</code> and <code>synthid-1</code> watermarks were
+        generated once on an open-weight model &mdash; the mark is spread across the whole text
+        as a statistical bias, so there is nothing to &ldquo;add&rdquo; here. This server
+        can&rsquo;t run the generator (it needs a GPU); it just serves the finished text. Take
+        it to the <strong>Verify</strong> tab with domain <code>demo.terryzink.com</code>.</p>
     </div>
 
     <label class="opt-check" id="wm-nolocator-row">

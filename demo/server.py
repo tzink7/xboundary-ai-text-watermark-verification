@@ -34,12 +34,13 @@ import traceback
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "..", "tools"))
 import tzsataitw as tz                       # noqa: E402
 import watermark_dns_tool as wdt             # noqa: E402
+import synthid_profile as sidp               # noqa: E402  (stdlib-only)
 
 try:                                          # fairoze needs `reedsolo`
     import fairoze as fz                     # noqa: E402
@@ -60,7 +61,10 @@ MAX_SELECTORS = 25       # cap for feature (d)
 MAX_VERIFY_CRAWL = 10    # selectors to try in feature (b) when only a domain is given
 MAX_FAIROZE_OFFSETS = 200  # cap the fairoze-1 offset search
 
-FAIROZE_SAMPLES_DIR = os.path.join(HERE, "..", "samples", "fairoze-1")
+SAMPLE_DIRS = {
+    "fairoze-1": os.path.join(HERE, "..", "samples", "fairoze-1"),
+    "synthid-1": os.path.join(HERE, "..", "samples", "synthid-1"),
+}
 
 DOMAIN_RE = re.compile(r"^(?=.{1,253}$)([a-zA-Z0-9](-?[a-zA-Z0-9])*\.)+[a-zA-Z]{2,}$")
 KEY_ID_RE = re.compile(r"^\d{1,6}\._watermark-text\.[a-zA-Z0-9.\-]{1,253}\.private\.pem$")
@@ -244,39 +248,51 @@ def list_demo_keys():
             out.append({"id": fn, "kind": "signing", "selector": sel, "domain": dom,
                         "locator": locator, "algorithm": algo,
                         "usable": algo in tz.ALGORITHMS})
-    fzs = _fairoze_samples()
-    if fzs:
-        out.append({"id": "fairoze-1-samples", "kind": "samples",
-                    "locator": fzs["locator"], "algorithm": "fairoze-1", "usable": True})
+    for algo in ("fairoze-1", "synthid-1"):
+        s = _sample_set(algo)
+        if s and s["samples"]:
+            out.append({"id": f"{algo}-samples", "kind": "samples",
+                        "locator": s["locator"], "algorithm": algo, "usable": True})
     return out
 
 
-_fzs_cache = None
+_sample_cache = {}
 
 
-def _fairoze_samples():
-    """The fairoze-1 sample manifest (from samples/fairoze-1/samples.json), with
-    each sample's text loaded. Returns None if fairoze isn't available."""
-    global _fzs_cache
-    if _fzs_cache is not None:
-        return _fzs_cache or None
-    manifest = os.path.join(FAIROZE_SAMPLES_DIR, "samples.json")
-    if fz is None or not os.path.isfile(manifest):
-        _fzs_cache = {}
+def _sample_canon(algo):
+    if algo == "fairoze-1" and fzp:
+        return fzp.canonicalize
+    if algo == "synthid-1":
+        return sidp.canonicalize
+    return lambda s: s
+
+
+def _sample_set(algo):
+    """The pre-generated sample manifest for `algo` (samples/<algo>/samples.json),
+    with each sample's text loaded. None if that algorithm has no sample set (or,
+    for fairoze-1, if `reedsolo` is missing so verification can't run)."""
+    if algo in _sample_cache:
+        return _sample_cache[algo] or None
+    d = SAMPLE_DIRS.get(algo)
+    manifest = os.path.join(d, "samples.json") if d else None
+    if not manifest or not os.path.isfile(manifest) or (algo == "fairoze-1" and fz is None):
+        _sample_cache[algo] = {}
         return None
     with open(manifest, encoding="utf-8") as fh:
         m = json.load(fh)
+    canon = _sample_canon(algo)
     samples = []
     for entry in m.get("samples", []):
-        path = os.path.join(FAIROZE_SAMPLES_DIR, entry["file"])
+        path = os.path.join(d, entry["file"])
         if not os.path.isfile(path):
             continue
         text = open(path, encoding="utf-8").read()
         samples.append({"id": entry["file"], "title": entry["title"],
-                        "chars": len(fzp.canonicalize(text)), "text": text})
-    _fzs_cache = {"algorithm": m["algorithm"], "locator": m["locator"],
-                  "samples": samples}
-    return _fzs_cache
+                        "chars": len(canon(text)), "text": text})
+    _sample_cache[algo] = {"algorithm": m.get("algorithm", algo),
+                           "locator": m.get("locator", ""),
+                           "note": m.get("note", ""), "samples": samples}
+    return _sample_cache[algo]
 
 
 def _need_text(body):
@@ -810,14 +826,16 @@ class Handler(BaseHTTPRequestHandler):
                                     "symmetric_algorithms": sorted(wdt.SYMMETRIC_ALGORITHMS),
                                     "key_types": list(wdt.KEY_TYPES),
                                     "homoglyphs": "".join(sorted(tz.HOMOGLYPH_REVERSE))})
-        if path == "/api/fairoze-samples":
-            fzs = _fairoze_samples()
-            if not fzs:
+        if path == "/api/samples":
+            algo = (parse_qs(urlparse(self.path).query).get("algorithm") or [""])[0]
+            s = _sample_set(algo)
+            if not s:
                 return self._send(200, {"available": False})
             return self._send(200, {"available": True,
-                                    "algorithm": fzs["algorithm"],
-                                    "locator": fzs["locator"],
-                                    "samples": fzs["samples"]})
+                                    "algorithm": s["algorithm"],
+                                    "locator": s["locator"],
+                                    "note": s.get("note", ""),
+                                    "samples": s["samples"]})
         return self._send(404, {"error": "not found"})
 
     do_HEAD = do_GET

@@ -102,45 +102,62 @@ const CHANNEL_LABEL = {
   "tzsataitw-2": "tzsataitw-2 — look-alike letters (needs a long paragraph)",
 };
 
-/* the fairoze-1 pre-generated samples, loaded lazily from /api/fairoze-samples */
-let FAIROZE_SAMPLES = null;   // { locator, samples: [{id, title, chars, text}] }
+/* pre-generated sample sets (fairoze-1, synthid-1), loaded lazily by algorithm
+   from /api/samples?algorithm=<algo>. Both are statistical marks spread across
+   the whole text -- there is nothing to inject into a user's own paragraph, so
+   the tab just lets you pick one. */
+const SAMPLE_SETS = {};        // algo -> { locator, note, samples: [{id,title,chars,text}] }
+let CUR_SAMPLE_ALGO = null;
 
-async function loadFairozeSamples() {
-  if (FAIROZE_SAMPLES) return FAIROZE_SAMPLES;
-  const res = await fetch("/api/fairoze-samples");
-  const d = await res.json();
-  FAIROZE_SAMPLES = d.available ? d : { samples: [] };
+const SAMPLE_CHANNEL = {
+  "fairoze-1": "publicly-detectable statistical watermark (Fairoze), Ed25519 variant",
+  "synthid-1": "symmetric statistical watermark (SynthID-Text) — no public key; verify via the d= document",
+};
+
+function populateSampleDropdown(algo) {
   const sel = $("wm-sample");
   sel.innerHTML = "";
-  for (const s of FAIROZE_SAMPLES.samples) {
+  for (const s of (SAMPLE_SETS[algo]?.samples || [])) {
     const o = document.createElement("option");
     o.value = s.id;
     o.textContent = `${s.title}  (${s.chars} chars)`;
     sel.appendChild(o);
   }
-  return FAIROZE_SAMPLES;
 }
 
-function showFairozeSample() {
-  const id = $("wm-sample").value;
-  const s = (FAIROZE_SAMPLES?.samples || []).find((x) => x.id === id);
+async function loadSamples(algo) {
+  if (!SAMPLE_SETS[algo]) {
+    const res = await fetch("/api/samples?algorithm=" + encodeURIComponent(algo));
+    const d = await res.json();
+    SAMPLE_SETS[algo] = d.available ? d : { samples: [] };
+  }
+  CUR_SAMPLE_ALGO = algo;
+  populateSampleDropdown(algo);
+  return SAMPLE_SETS[algo];
+}
+
+function showSample() {
+  const set = SAMPLE_SETS[CUR_SAMPLE_ALGO];
+  if (!set) return;
+  const s = (set.samples || []).find((x) => x.id === $("wm-sample").value);
   if (!s) return;
   $("wm-result").dataset.raw = s.text;
   $("wm-result").value = s.text;
   $("wm-viz").checked = false;
   showWmViz(false);
+  const selNum = (set.locator || "").split(".")[0] || "?";
   kv($("wm-meta"), [
-    ["algorithm", "fairoze-1"],
-    ["channel", "publicly-detectable statistical watermark (Fairoze), Ed25519 variant"],
-    ["locator", FAIROZE_SAMPLES.locator],
+    ["algorithm", CUR_SAMPLE_ALGO],
+    ["channel", SAMPLE_CHANNEL[CUR_SAMPLE_ALGO] || "statistical watermark"],
+    ["locator", set.locator],
     ["length", s.chars + " canonical chars"],
     ["origin", "pre-generated on an open-weight model — not signed by this server"],
-    ["next step", "Verify tab → domain demo.terryzink.com (selector 3)"],
+    ["next step", `Verify tab → domain demo.terryzink.com (selector ${selNum})`],
   ]);
   $("wm-out").classList.remove("hidden");
 }
 
-/* toggle the watermark tab between "sign my text" and "pick a fairoze sample" */
+/* toggle the watermark tab between "sign my text" and "pick a pre-generated sample" */
 function syncKeyAlgo() {
   const opt = $("wm-key").selectedOptions[0];
   const kind = opt ? opt.dataset.kind : "";
@@ -159,9 +176,9 @@ function syncKeyAlgo() {
     note.textContent = `${algo} spreads the mark across the whole text statistically — `
       + "there is nothing to inject into your own paragraph. Pick one of the "
       + "pre-generated samples below.";
-    loadFairozeSamples().then((d) => {
-      if (d.samples.length) showFairozeSample();
-      else note.textContent = "no fairoze-1 samples are available on this server.";
+    loadSamples(algo).then((d) => {
+      if (d.samples.length) showSample();
+      else note.textContent = `no ${algo} samples are available on this server.`;
     });
     return;
   }
@@ -219,7 +236,7 @@ function syncKeyAlgo() {
   }
 })();
 $("wm-key").addEventListener("change", syncKeyAlgo);
-$("wm-sample").addEventListener("change", showFairozeSample);
+$("wm-sample").addEventListener("change", showSample);
 
 let HOMOGLYPH_RE = null;   // set from /api/keys \u2014 the tzsataitw-2 look-alike letters
 
