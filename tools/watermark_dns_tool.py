@@ -77,9 +77,15 @@ DH_ALGOS = OrderedDict([
     ("sha512", ("sha512", 64)),
 ])
 
-REQUIRED_RECORD_TAGS = ["v", "a", "p", "c", "nb", "na"]
-KNOWN_RECORD_TAGS = {"v", "a", "p", "c", "d", "dh", "s", "nb", "na", "r"}
+# "p" is required only for asymmetric records -- a "k=symmetric" record has no
+# public key. lint_record enforces the conditional; keep it out of this flat list.
+REQUIRED_RECORD_TAGS = ["v", "a", "c", "nb", "na"]
+KNOWN_RECORD_TAGS = {"v", "a", "p", "k", "c", "d", "dh", "s", "nb", "na", "r"}
 DESCRIPTOR_REQUIRED_FIELDS = ["received_from", "selector", "provider", "c", "ts"]
+
+# draft Section 6.6: the required common fields of a k=symmetric verification doc
+VERIFY_DOC_REQUIRED_FIELDS = ["algorithm", "verify", "canonicalization"]
+VERIFY_DOC_CANON_TOKENS = {"strip-zero-width", "nfc", "trim"}
 
 # There is no IANA "a=" registry yet (Section 15). This is the local stand-in --
 # the algorithm ids this toolchain recognizes:
@@ -93,7 +99,15 @@ KNOWN_ALGORITHMS = {
     "tzsataitw-2": "steganographic short-text watermark, look-alike-letter channel -- "
                    "same tradeoffs as tzsataitw-1, needs a longer paragraph "
                    "(~1600 chars); see tools/tzsataitw.py",
+    "synthid-1": "SynthID-Text [Dathathri24] -- SYMMETRIC (no public key): "
+                 "k=symmetric, no p=, d= points to a Section 6.6 verification "
+                 "document; verify via that doc's endpoint. See tools/synthid.py",
 }
+
+# Algorithms this toolchain knows to be symmetric (k=symmetric, no p=). The
+# authoritative statement is the a= registration (Section 15 / D2); this set is
+# only so the linter can flag "a=synthid-1 but you published a p=".
+SYMMETRIC_ALGORITHMS = {"synthid-1"}
 
 
 # --------------------------------------------------------------------------- #
@@ -463,7 +477,7 @@ def inspect_spki(raw):
 # (d) dh= digest computation                                                   #
 # --------------------------------------------------------------------------- #
 
-def compute_dh(data_bytes, algo_token="sha-256", pad=True):
+def compute_dh(data_bytes, algo_token="sha-256", pad=False):
     if algo_token not in DH_ALGOS:
         raise ValueError(f"unsupported dh algorithm {algo_token!r}")
     hashlib_name, _ = DH_ALGOS[algo_token]
@@ -672,6 +686,111 @@ def build_descriptor(received_from, selector, provider, c, ts, extra=None, compa
     return obj, body.encode("utf-8")
 
 
+def build_verify_doc(algorithm, verify, canon, extra=None, compact=False):
+    """The draft Section 6.6 verification document for a k=symmetric record.
+    Required common fields first, then any scheme-specific extras."""
+    obj = OrderedDict()
+    obj["algorithm"] = algorithm
+    obj["verify"] = verify
+    obj["canonicalization"] = list(canon)
+    for k, v in (extra or []):
+        if k in obj:
+            raise ValueError(f"extra field {k!r} collides with a required field")
+        obj[k] = v
+    body = (json.dumps(obj, separators=(",", ":")) if compact
+            else json.dumps(obj, indent=2))
+    return obj, body.encode("utf-8")
+
+
+def validate_verify_doc_obj(obj, f, record_algorithm=None):
+    for field in VERIFY_DOC_REQUIRED_FIELDS:
+        if not str(obj.get(field, "")).strip() and obj.get(field) != []:
+            f.error("VD-MISSING", f"verification document is missing required field {field!r} (Section 6.6)")
+    if record_algorithm and obj.get("algorithm") not in (None, record_algorithm):
+        f.error("VD-ALGORITHM",
+                f"document algorithm={obj.get('algorithm')!r} does not match the record's "
+                f"a={record_algorithm!r} (Section 6.6: a verifier MUST reject this)")
+    v = str(obj.get("verify", ""))
+    if v and not v.lower().startswith("https://"):
+        f.error("VD-VERIFY-SCHEME", f"verify={v!r}: HTTPS is REQUIRED (Section 6.6)")
+    canon = obj.get("canonicalization")
+    if canon is not None:
+        if not isinstance(canon, list):
+            f.error("VD-CANON-TYPE", "canonicalization MUST be an ordered JSON array (Section 6.6)")
+        else:
+            unknown = [t for t in canon if t not in VERIFY_DOC_CANON_TOKENS]
+            if unknown:
+                f.warn("VD-CANON-TOKEN",
+                       f"canonicalization has token(s) {unknown} this document does not "
+                       f"define ({sorted(VERIFY_DOC_CANON_TOKENS)}); a verifier that does "
+                       f"not know them MUST treat the document as unusable (Section 6.6)")
+
+
+def cmd_make_verify_doc(args):
+    missing = [name for name, val in (
+        ("--algorithm", args.algorithm),
+        ("--verify", args.verify),
+    ) if val is None]
+    if missing:
+        sys.exit(f"error: --make-verify-doc requires {', '.join(missing)}")
+
+    canon = [t.strip() for t in (args.canon or "strip-zero-width,nfc,trim").split(",") if t.strip()]
+
+    def _typed(v):
+        """A --extra value that reads as a number or bool becomes one in the JSON
+        (so e.g. threshold=0.5123 is a number, matching the Section 6.6 example)."""
+        low = v.lower()
+        if low in ("true", "false"):
+            return low == "true"
+        try:
+            return int(v)
+        except ValueError:
+            pass
+        try:
+            return float(v)
+        except ValueError:
+            return v
+
+    extra = []
+    for pair in args.extra or []:
+        if "=" not in pair:
+            sys.exit(f"error: --extra expects key=value, got {pair!r}")
+        k, _, v = pair.partition("=")
+        extra.append((k.strip(), _typed(v.strip())))
+
+    obj, body = build_verify_doc(args.algorithm, args.verify, canon,
+                                 extra=extra, compact=args.compact)
+    f = Findings()
+    validate_verify_doc_obj(obj, f, record_algorithm=args.algorithm)
+
+    out = args.out if args.out != "desc.json" else "verify.json"
+    if not args.print_only:
+        with open(out, "wb") as fh:
+            fh.write(body)
+    dh = compute_dh(body, args.dh_algo, pad=args.pad)
+
+    if args.json:
+        print(json.dumps({"document": obj, "bytes_written": None if args.print_only else out,
+                          "byte_length": len(body), "dh": dh,
+                          "findings": f.as_dicts()}, indent=2))
+        return
+
+    print("# d= verification document (draft Section 6.6, for a k=symmetric record)")
+    print(body.decode("utf-8"))
+    print()
+    if not args.print_only:
+        print(f"# written to: {out}   ({len(body)} bytes)")
+    print("# dh= value (digest of exactly these bytes):")
+    print(f"dh={dh}")
+    print()
+    print("# Serve the EXACT bytes above at your d= HTTPS URL, then build the record:")
+    print(f"#   --make-record ... --algorithm {args.algorithm} --k symmetric \\")
+    print(f"#     --d <that URL> --dh-value {dh}")
+    if f.items:
+        print()
+        print(f.render())
+
+
 def cmd_make_descriptor(args):
     missing = [name for name, val in (
         ("--received-from", args.received_from),
@@ -702,7 +821,7 @@ def cmd_make_descriptor(args):
         with open(args.out, "wb") as fh:
             fh.write(body)
 
-    dh = compute_dh(body, args.dh_algo, pad=not args.no_pad)
+    dh = compute_dh(body, args.dh_algo, pad=args.pad)
 
     if args.json:
         print(json.dumps({
@@ -798,7 +917,7 @@ def resolve_pubkey_to_p(pubkey_arg):
 
 
 def build_record(tags):
-    ordered = ["v", "a", "p", "c", "d", "dh", "s", "nb", "na", "r"]
+    ordered = ["v", "a", "p", "k", "c", "d", "dh", "s", "nb", "na", "r"]
     parts = []
     for key in ordered:
         if key in tags and tags[key] is not None:
@@ -822,21 +941,37 @@ def cmd_make_record(args):
     if missing:
         sys.exit(f"error: --make-record requires {', '.join(missing)}")
 
-    p_value = args.p
-    if args.pubkey:
-        p_value = resolve_pubkey_to_p(args.pubkey)
-    if not p_value:
-        sys.exit("error: --make-record requires --pubkey or --p")
+    symmetric = args.k == "symmetric"
+    if args.k and not symmetric:
+        sys.exit(f"error: --k must be 'symmetric' (the only value the draft defines)")
+
+    p_value = None
+    if symmetric:
+        if args.pubkey or args.p:
+            sys.exit("error: k=symmetric has no public key -- drop --pubkey / --p")
+        if not (args.d or args.d_file):
+            sys.exit("error: k=symmetric requires --d (the Section 6.6 verification "
+                     "document URL), and --d-file or --dh-value for its hash")
+    else:
+        p_value = args.p
+        if args.pubkey:
+            p_value = resolve_pubkey_to_p(args.pubkey)
+        if not p_value:
+            sys.exit("error: --make-record requires --pubkey or --p "
+                     "(or --k symmetric for a scheme with no public key)")
 
     dh_value = args.dh_value
     if args.d_file and not dh_value:
         raw = load_bytes_from_arg(args.d_file, f)
-        dh_value = compute_dh(raw, args.dh_algo, pad=not args.no_pad)
+        dh_value = compute_dh(raw, args.dh_algo, pad=args.pad)
 
     tags = OrderedDict()
     tags["v"] = args.v
     tags["a"] = args.algorithm
-    tags["p"] = p_value
+    if p_value:
+        tags["p"] = p_value
+    if symmetric:
+        tags["k"] = "symmetric"
     tags["c"] = normalize_c(args.c)
     if args.d:
         tags["d"] = args.d
@@ -910,6 +1045,27 @@ def lint_record(record_text, selector=None, domain=None, is_make=False,
         if tag not in tags:
             f.error("MISSING", f"required tag '{tag}=' is absent (Section 6.1)")
 
+    # ---- k / p interaction (Section 6.1) --------------------------------
+    #   k=symmetric  -> p= MUST be absent, d= MUST be present
+    #   k= absent    -> p= REQUIRED (asymmetric)
+    #   neither      -> malformed (looks like a forgotten p=)
+    k_val = tags.get("k")
+    is_symmetric = k_val == "symmetric"
+    if "k" in tags:
+        if k_val != "symmetric":
+            f.error("K-VALUE",
+                    f"k={k_val!r}: the only value this document defines is 'symmetric' "
+                    f"(Section 6.1)")
+        elif "p" in tags:
+            f.error("K-SYMMETRIC-HAS-P",
+                    "k=symmetric asserts there is no public key, but p= is present "
+                    "(Section 6.1)")
+    if not is_symmetric and "p" not in tags:
+        f.error("P-OR-K-MISSING",
+                "no p= and no k=symmetric: either publish the public key, or add "
+                "k=symmetric for a scheme that has none (Section 6.1). An absent p= "
+                "alone is indistinguishable from a publishing error.")
+
     # ---- v ---------------------------------------------------------------
     if "v" in tags and tags["v"] != PROTOCOL_VERSION:
         f.error("V-VALUE", f"v={tags['v']!r}; this tool implements v={PROTOCOL_VERSION}")
@@ -929,6 +1085,10 @@ def lint_record(record_text, selector=None, domain=None, is_make=False,
                    f"a={tags['a']!r} is not a recognized algorithm "
                    f"(known: {', '.join(KNOWN_ALGORITHMS)}). No IANA registry exists yet "
                    f"(Section 15); a verifier MUST reject an unrecognized value.")
+        if tags["a"] in SYMMETRIC_ALGORITHMS and not is_symmetric:
+            f.error("A-SYMMETRIC",
+                    f"a={tags['a']!r} is a symmetric scheme: it needs k=symmetric and "
+                    f"no p= (Section 6.1). Did you build it as if it were asymmetric?")
 
     # ---- p ---------------------------------------------------------------
     if "p" in tags:
@@ -1026,14 +1186,22 @@ def lint_record(record_text, selector=None, domain=None, is_make=False,
     # ---- d / dh -------------------------------------------------------
     has_d = "d" in tags and tags["d"]
     has_dh = "dh" in tags and tags["dh"]
+    if is_symmetric and not has_d:
+        f.error("D-REQUIRED-SYMMETRIC",
+                "k=symmetric requires d= -- it points to the Section 6.6 verification "
+                "document, which names the verify endpoint (a symmetric scheme has no "
+                "other way to be checked)")
     if has_d:
         if not tags["d"].lower().startswith("https://"):
             f.error("D-SCHEME", f"d={tags['d']!r}: HTTPS is REQUIRED, plain HTTP MUST NOT be used (Section 6.1)")
         if not has_dh:
-            if c_norm == "re-sign":
+            if c_norm == "re-sign" or is_symmetric:
                 f.error("DH-REQUIRED",
-                        "dh= is REQUIRED when c=re-sign is used with a d= document "
-                        "(Section 6.1 / 9.4)")
+                        "dh= is REQUIRED here (" +
+                        ("c=re-sign with a d= document" if c_norm == "re-sign"
+                         else "k=symmetric: the verification document a verifier is "
+                              "routed to MUST be integrity-checked") +
+                        ") (Section 6.1 / 9.4)")
             else:
                 f.warn("DH-RECOMMENDED", "dh= is RECOMMENDED whenever d= is present (Section 6.1)")
     if has_dh:
@@ -1185,7 +1353,10 @@ def describe_record(tags, selector, domain, key_label, validity_word, nb_val, na
                     if has_d else "re-signs its own earlier text"),
     }.get(c, "custody type unclear")
 
-    seg = f"{key_label or 'key'}, {role}"
+    if tags.get("k") == "symmetric":
+        seg = f"symmetric scheme (no public key; verify via the d= document), {role}"
+    else:
+        seg = f"{key_label or 'key'}, {role}"
 
     if validity_word == "revoked":
         val = "REVOKED"
@@ -1481,9 +1652,11 @@ def lint_crawl(domain, start, fetch_d=False, max_selectors=50, at_time=None):
 # their prefix (before the first '-'), lowercased, or to "other".
 _ROW_FOR_CODE = {
     "V-VALUE": "v",
-    "A-EMPTY": "a", "A-VERSION": "a", "A-REGISTRY": "a",
+    "A-EMPTY": "a", "A-VERSION": "a", "A-REGISTRY": "a", "A-SYMMETRIC": "a",
     "P-EMPTY": "p", "P-B64": "p", "P-NOT-SPKI": "p", "P-WEAK-KEY": "p",
-    "P-KEY-MALFORMED": "p", "P-KEYINFO": "p",
+    "P-KEY-MALFORMED": "p", "P-KEYINFO": "p", "P-OR-K-MISSING": "p",
+    "K-VALUE": "k", "K-SYMMETRIC-HAS-P": "k",
+    "D-REQUIRED-SYMMETRIC": "d",
     "C-VALUE": "c", "C-CANONICAL": "c", "C-ALIAS": "c", "D-C-MISMATCH": "c",
     "S-VALUE": "s",
     "NB-VALUE": "nb",
@@ -1499,7 +1672,7 @@ _ROW_FOR_CODE = {
     "D-PROVIDER": "d= doc", "D-TS": "d= doc", "D-EXTRA": "d= doc",
     "D-SIGN-SOURCE": "d= doc",
 }
-_TABLE_ROW_ORDER = ["syntax", "v", "a", "p", "c", "d", "dh", "s", "nb", "na",
+_TABLE_ROW_ORDER = ["syntax", "v", "a", "p", "k", "c", "d", "dh", "s", "nb", "na",
                     "validity", "r", "custody", "d= doc", "other"]
 _LEVEL_RANK = {"OK": 0, "INFO": 1, "WARN": 2, "ERROR": 3}
 
@@ -1551,6 +1724,10 @@ def _clean_comment(tag, tags):
         if re.fullmatch(r"\d+", raw):
             return f"{raw}  ({_fmt_dt(raw)})"
         return raw
+    if tag == "k":
+        return tags.get("k") or "(absent -> asymmetric, p= required)"
+    if tag == "p" and tags.get("k") == "symmetric":
+        return "n/a -- k=symmetric (no public key)"
     if tag in ("v", "c", "d", "dh", "s", "r", "a", "p"):
         return tags.get(tag) or "n/a"
     return "n/a"
@@ -1673,7 +1850,12 @@ def render_findings_table(f, record_str, indent=""):
             continue  # shown in the d= descriptor table instead
         grouped.setdefault(_finding_row(code, msg), []).append((lvl, msg))
 
-    order = ["v", "a", "p", "c", "nb", "na"]
+    order = ["v", "a"]
+    if tags.get("k") == "symmetric":
+        order.append("k")                       # symmetric: k= row, no p= row
+    else:
+        order += [t for t in ("k",) if t in tags] + ["p"]
+    order += ["c", "nb", "na"]
     order += [t for t in ("d", "dh", "s", "r") if t in tags]
     order += [r for r in grouped if r not in order]
     order = ([r for r in _TABLE_ROW_ORDER if r in order]
@@ -2188,7 +2370,7 @@ def cmd_dh(args):
         sys.exit("error: --dh requires --input (a local path or https:// URL)")
     f = Findings()
     raw = load_bytes_from_arg(args.input, f)
-    value = compute_dh(raw, args.dh_algo, pad=not args.no_pad)
+    value = compute_dh(raw, args.dh_algo, pad=args.pad)
     if args.json:
         print(json.dumps({"input": args.input, "byte_length": len(raw), "dh": value,
                           "findings": f.as_dicts()}, indent=2))
@@ -2278,6 +2460,13 @@ def _run_wizard(args):
     selector = _ask_int("Selector number", 1)
 
     print()
+    print("Does this watermarking scheme have a PUBLIC verification key? (draft Section 6.1)")
+    print("  yes  - asymmetric (fairoze-1, tzsataitw-*): p= holds the public key")
+    print("  no   - symmetric (synthid-1): k=symmetric, no p=, verification is")
+    print("         via a Section 6.6 document at d= that names an endpoint")
+    symmetric = not _ask_yesno("Public key?", "y")
+
+    print()
     print("Custody type for text signed under this selector (draft Section 6.1):")
     print("  sign     - this provider GENERATED the text fresh")
     print("  re-sign  - this provider MODIFIED text that already carried a watermark")
@@ -2286,7 +2475,9 @@ def _run_wizard(args):
     # --- d= descriptor decision (may bump the selector) ----------------
     want_d = False
     handoff_kind = None
-    if c == "re-sign":
+    if symmetric:
+        want_d = True                      # k=symmetric REQUIRES d= (Section 6.1)
+    elif c == "re-sign":
         print()
         print("A re-sign selector can point (d=) to a JSON custody descriptor:")
         print("  cross-vendor - the text came from a DIFFERENT provider  -> d= REQUIRED")
@@ -2309,16 +2500,24 @@ def _run_wizard(args):
             selector = 2
 
     # --- key material -------------------------------------------------
-    print()
-    print(f"Key material for {selector}._{WELL_KNOWN_LABEL.lstrip('_')}.{domain}:")
-    print("  1) generate a new asymmetric key pair now")
-    print("  2) use an existing public key file (PEM or DER)")
-    print("  3) paste a p= value directly")
-    kchoice = _ask_choice("Choose", ["1", "2", "3"], "1")
-
     p_value = None
     priv_path = pub_path = None
-    if kchoice == "1":
+    if symmetric:
+        print()
+        print("Symmetric scheme: no key pair, no p=. The verification document at d=")
+        print("(built next) is what a third party uses to check the mark.")
+        kchoice = None
+    else:
+        print()
+        print(f"Key material for {selector}._{WELL_KNOWN_LABEL.lstrip('_')}.{domain}:")
+        print("  1) generate a new asymmetric key pair now")
+        print("  2) use an existing public key file (PEM or DER)")
+        print("  3) paste a p= value directly")
+        kchoice = _ask_choice("Choose", ["1", "2", "3"], "1")
+
+    if kchoice is None:
+        pass                       # symmetric: no key material
+    elif kchoice == "1":
         key_type = _ask_choice("Key type", list(KEY_TYPES), "ed25519")
         default_stem = keypair_stem(selector, domain)
         stem = _ask("Output filename stem", default_stem)
@@ -2347,7 +2546,8 @@ def _run_wizard(args):
 
     # --- algorithm id ----------------------------------------------
     print()
-    algorithm = _ask("Watermarking algorithm id (a=)", "fairoze-1")
+    algorithm = _ask("Watermarking algorithm id (a=)",
+                     "synthid-1" if symmetric else "fairoze-1")
     if not re.search(r"-\d+$", algorithm):
         print(f"  '{algorithm}' has no version suffix; the draft SHOULD-recommends one.")
         if _ask_yesno(f"Use '{algorithm}-1'?", "y"):
@@ -2367,9 +2567,38 @@ def _run_wizard(args):
     if status == "revoked":
         print("  note: a revoked key is not valid for ANY new verification (Section 9.2).")
 
-    # --- descriptor build --------------------------------------
+    # --- descriptor / verification-document build ---------------
     d_url = dh_value = descriptor_path = None
-    if want_d:
+    if symmetric:
+        print()
+        print("d= verification document (draft Section 6.6):")
+        verify_url = _ask_nonempty("verify (the HTTPS endpoint a third party POSTs text to)")
+        canon_default = "strip-zero-width,nfc,trim"
+        canon = [t.strip() for t in _ask("canonicalization tokens (comma-separated)",
+                                         canon_default).split(",") if t.strip()]
+        vextra = []
+        while _ask_yesno("Add a scheme parameter (e.g. tokenizer, threshold)?", "n"):
+            k = _ask_nonempty("  field name")
+            v = _ask_nonempty("  field value")
+            try:
+                v = int(v)
+            except ValueError:
+                try:
+                    v = float(v)
+                except ValueError:
+                    pass
+            vextra.append((k, v))
+        compact = _ask_yesno("Minified JSON? (default: indented)", "n")
+        descriptor_path = _ask("Verification-document output path", "verify.json")
+        _, body = build_verify_doc(algorithm, verify_url, canon, vextra, compact)
+        with open(descriptor_path, "wb") as fh:
+            fh.write(body)
+        dh_algo = _ask_choice("dh= hash algorithm", ["sha-256", "sha-384", "sha-512"], "sha-256")
+        dh_value = compute_dh(body, dh_algo, pad=False)
+        print(f"  wrote {descriptor_path} ({len(body)} bytes); dh={dh_value}")
+        default_url = f"https://{domain}/watermark/{os.path.basename(descriptor_path)}"
+        d_url = _ask_nonempty("d= HTTPS URL that will serve those exact bytes", default_url)
+    elif want_d:
         print()
         print("d= custody descriptor (draft Section 7.2):")
         rf_default = "otherprovider.ai" if handoff_kind == "cross-vendor" else "self"
@@ -2388,7 +2617,7 @@ def _run_wizard(args):
         with open(descriptor_path, "wb") as fh:
             fh.write(body)
         dh_algo = _ask_choice("dh= hash algorithm", ["sha-256", "sha-384", "sha-512"], "sha-256")
-        dh_value = compute_dh(body, dh_algo, pad=True)
+        dh_value = compute_dh(body, dh_algo, pad=False)
         print(f"  wrote {descriptor_path} ({len(body)} bytes); dh={dh_value}")
         default_url = f"https://{selector}.{WELL_KNOWN_LABEL}.{domain}/{os.path.basename(descriptor_path)}"
         d_url = _ask_nonempty("d= HTTPS URL that will serve those exact bytes", default_url)
@@ -2404,7 +2633,10 @@ def _run_wizard(args):
     tags = OrderedDict()
     tags["v"] = PROTOCOL_VERSION
     tags["a"] = algorithm
-    tags["p"] = p_value
+    if p_value:
+        tags["p"] = p_value
+    if symmetric:
+        tags["k"] = "symmetric"
     tags["c"] = c
     if d_url:
         tags["d"] = d_url
@@ -2487,6 +2719,7 @@ MODE_HANDLERS = [
     ("keygen", cmd_keygen),
     ("make_record", cmd_make_record),
     ("make_descriptor", cmd_make_descriptor),
+    ("make_verify_doc", cmd_make_verify_doc),
     ("dh", cmd_dh),
     ("lint", cmd_lint),
     ("traverse", cmd_traverse),
@@ -2519,6 +2752,8 @@ def build_parser():
                    help="(b) build the _watermark-text DNS TXT record")
     m.add_argument("--make-descriptor", action="store_true",
                    help="(c) build the d= JSON custody descriptor")
+    m.add_argument("--make-verify-doc", action="store_true",
+                   help="(c') build the d= JSON verification document (k=symmetric, Section 6.6)")
     m.add_argument("--dh", action="store_true",
                    help="(d) compute the dh= digest of a file or URL")
     m.add_argument("--lint", action="store_true",
@@ -2531,8 +2766,9 @@ def build_parser():
     common.add_argument("--selector", type=int, help="selector number (default 1 for --keygen)")
     common.add_argument("--json", action="store_true", help="machine-readable JSON output")
     common.add_argument("--dh-algo", default="sha-256", help="dh= hash algorithm (default sha-256)")
-    common.add_argument("--no-pad", action="store_true",
-                        help="emit dh= base64url without '=' padding")
+    common.add_argument("--pad", action="store_true",
+                        help="emit dh= base64url WITH '=' padding (draft Section 6.1 says "
+                             "a generator SHOULD omit it; a verifier accepts either)")
 
     g = p.add_argument_group("--keygen")
     g.add_argument("--key-type", default="ed25519",
@@ -2545,6 +2781,9 @@ def build_parser():
     g.add_argument("--algorithm", "--a", dest="algorithm", help="a= value, e.g. fairoze-1  (REQUIRED)")
     g.add_argument("--pubkey", help="public key: PEM path, DER path, or literal base64")
     g.add_argument("--p", help="p= value directly (base64 SPKI), instead of --pubkey")
+    g.add_argument("--k", help="k= key model. 'symmetric' for a scheme with no public "
+                               "key (synthid-1): emits k=symmetric, no p=, and requires "
+                               "--d (Section 6.6). Omit for an asymmetric record.")
     g.add_argument("--c", help="c= custody type: sign | re-sign  (REQUIRED for --make-record)")
     g.add_argument("--d", help="d= HTTPS URL")
     g.add_argument("--dh-value", help="dh= value directly (otherwise computed from --d-file)")
@@ -2558,12 +2797,16 @@ def build_parser():
     g.add_argument("--v", default=PROTOCOL_VERSION, help=argparse.SUPPRESS)
     g.add_argument("--force", action="store_true", help="emit even with ERROR-level lint findings")
 
-    g = p.add_argument_group("--make-descriptor")
-    g.add_argument("--received-from", help="upstream provider domain, or free text  (REQUIRED)")
-    g.add_argument("--provider", help="this (signing) provider's domain  (REQUIRED)")
-    g.add_argument("--ts", help="publish timestamp: unix seconds, 'now', ISO date (default now)")
+    g = p.add_argument_group("--make-descriptor / --make-verify-doc")
+    g.add_argument("--received-from", help="[--make-descriptor] upstream provider domain, or free text  (REQUIRED)")
+    g.add_argument("--provider", help="[--make-descriptor] this (signing) provider's domain  (REQUIRED)")
+    g.add_argument("--ts", help="[--make-descriptor] publish timestamp: unix seconds, 'now', ISO date (default now)")
+    g.add_argument("--verify", help="[--make-verify-doc] the HTTPS verification endpoint  (REQUIRED)")
+    g.add_argument("--canon", help="[--make-verify-doc] comma-separated canonicalization tokens "
+                                   "(default 'strip-zero-width,nfc,trim')")
     g.add_argument("--extra", action="append", help="extra field key=value (repeatable)")
-    g.add_argument("--out", default="desc.json", help="descriptor output path (default desc.json)")
+    g.add_argument("--out", default="desc.json",
+                   help="output path (default desc.json; verify.json for --make-verify-doc)")
     g.add_argument("--compact", action="store_true", help="minified JSON instead of indented")
 
     g = p.add_argument_group("--dh")
