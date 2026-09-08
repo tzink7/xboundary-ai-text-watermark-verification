@@ -409,13 +409,26 @@ def _fairoze_result(vt, record_locator):
 
 # --------------------------------------------------------------------------- #
 # synthid-1 (k=symmetric): the demo server IS the provider, so it plays the    #
-# "verify" endpoint. It can't run the detector inline (needs the tokenizer +   #
-# transformers), so it answers from a pre-computed score table over the        #
-# pre-generated samples -- the same "pre-generated only" deal as fairoze-1.    #
+# Section 6.6 `verify` endpoint. Two engines, same result for the same text:   #
+#                                                                             #
+#   live  -- run tools/synthid.py's masked-mean detector (tokenizer + the      #
+#            SynthID logits-processor; NO model weights). Scores ANY text.     #
+#            Needs `torch`+`transformers` installed and the secret keys        #
+#            (SYNTHID_KEYS_JSON env or SYNTHID_KEYS_FILE path).                #
+#   table -- look the canonicalized text up in the pre-computed                #
+#            samples/synthid-1/verify-scores.json (10 samples + 40 controls).  #
+#            No heavy deps; only the pre-generated texts are known.            #
+#                                                                             #
+# SYNTHID_VERIFY_MODE = auto (default: live if it can, else table) | live |    #
+# table. Both call the same tools/synthid.py code, so a sample scores the      #
+# same either way.                                                             #
 # --------------------------------------------------------------------------- #
 
 _ZW_RE = re.compile("[​‌‍⁠]")
 _synthid_scores_cache = None
+_synthid_engine_cache = None   # None=untried, (synthid, cfg, tok, proc), or False
+_SYNTHID_MODE = os.environ.get("SYNTHID_VERIFY_MODE", "auto").strip().lower()
+_SYNTHID_CANON_DEFAULT = ["strip-zero-width", "nfc", "trim"]
 
 
 def _apply_canon(text, tokens):
@@ -443,34 +456,92 @@ def _synthid_scores():
     return _synthid_scores_cache or None
 
 
+def _synthid_engine():
+    """The live scorer -- (synthid_module, cfg, tokenizer, processor) -- built
+    once and cached. None if `table` mode, or if torch/transformers or the keys
+    are missing (caller falls back to the pre-computed table)."""
+    global _synthid_engine_cache
+    if _SYNTHID_MODE == "table":
+        return None
+    if _synthid_engine_cache is None:
+        cfg_path = os.path.join(SAMPLE_DIRS["synthid-1"], "synthid-1.config.json")
+        keys_path = os.environ.get("SYNTHID_KEYS_FILE")
+        if keys_path:
+            keys_path = os.path.expanduser(keys_path)
+        try:
+            import synthid                                     # noqa: E402
+            if not (keys_path or os.environ.get("SYNTHID_KEYS_JSON")):
+                raise RuntimeError("no keys (set SYNTHID_KEYS_JSON or SYNTHID_KEYS_FILE)")
+            synthid.make_device_independent()
+            cfg = synthid.load_config(cfg_path, keys_path)
+            bundled = os.environ.get("SYNTHID_TOKENIZER_BUNDLED")
+            if os.environ.get("SYNTHID_TOKENIZER"):
+                cfg["tokenizer"] = os.environ["SYNTHID_TOKENIZER"]
+            elif bundled and os.path.isdir(bundled):
+                cfg["tokenizer"] = bundled              # baked into the image, no HF fetch
+            tok, proc = synthid._load_everything(cfg)
+            _synthid_engine_cache = (synthid, cfg, tok, proc)
+            print(f"synthid-1 verify: live engine ready (tokenizer {cfg['tokenizer']}, "
+                  f"threshold {cfg.get('threshold')})", file=sys.stderr)
+        except (Exception, SystemExit) as exc:   # noqa: BLE001
+            if _SYNTHID_MODE == "live":
+                print(f"SYNTHID_VERIFY_MODE=live but the live engine failed: {exc}",
+                      file=sys.stderr)
+            else:
+                print(f"synthid-1 verify: live engine unavailable ({exc}); using the "
+                      f"pre-computed table", file=sys.stderr)
+            _synthid_engine_cache = False
+    return _synthid_engine_cache or None
+
+
 def _synthid_verify(text, loc, verify_doc):
-    """Stand-in for a real SynthID `verify` endpoint: canonicalize per the d=
-    document, then look the text up in the pre-computed score table."""
-    tbl = _synthid_scores()
+    """The Section 6.6 `verify` endpoint for a synthid-1 record: canonicalize
+    per the d= document, then score -- live if available, else from the table."""
     base = {"algorithm": "synthid-1", "record_locator": loc, "record_algorithm": "synthid-1",
             "channel": "symmetric statistical watermark (SynthID-Text) -- no public key",
             "verify_endpoint": (verify_doc or {}).get("verify")}
-    if not tbl:
-        return {**base, "mark_found": False,
-                "detail": "synthid-1 verification data is not available on this server"}
-    canon = (verify_doc or {}).get("canonicalization") or tbl.get("canonicalization")
+    canon = (verify_doc or {}).get("canonicalization") or _SYNTHID_CANON_DEFAULT
     try:
-        key = hashlib.sha256(_apply_canon(text, canon).encode("utf-8")).hexdigest()
+        ctext = _apply_canon(text, canon)
     except ValueError as exc:
         return {**base, "mark_found": False, "detail": str(exc)}
+
+    eng = _synthid_engine()
+    if eng is not None:
+        synthid, cfg, tok, proc = eng
+        try:
+            r = synthid.verify_text(ctext, cfg, tokenizer=tok, processor=proc)
+        except Exception as exc:                              # noqa: BLE001
+            return {**base, "mark_found": False,
+                    "detail": f"synthid-1 scoring failed: {exc}"}
+        if r.get("score") is None:
+            return {**base, "mark_found": False,
+                    "detail": r.get("reason", "text too short to score")}
+        return {**base, "mark_found": True, "engine": "live",
+                "verified": bool(r["verified"]), "signature_ok": None,
+                "score": round(r["score"], 6), "threshold": r.get("threshold"),
+                "tokens_scored": r.get("tokens_scored"), "detail": r.get("reason")}
+
+    # ---- fallback: the pre-computed table (knows only the committed texts)
+    tbl = _synthid_scores()
+    if not tbl:
+        return {**base, "mark_found": False,
+                "detail": "synthid-1 verification is not available on this server"}
+    key = hashlib.sha256(ctext.encode("utf-8")).hexdigest()
     hit = tbl.get("scores", {}).get(key)
     if hit is None:
         return {**base, "mark_found": False, "hint": "synthid-demo-samples-only",
-                "detail": ("this demo's verify endpoint recognizes only its pre-generated "
-                           "synthid-1 samples -- real SynthID detection needs the tokenizer "
-                           "and model this server does not run. Paste one of the samples from "
-                           "the Watermark tab.")}
+                "detail": ("this server is running the pre-computed synthid-1 verifier, "
+                           "which knows only the pre-generated samples -- paste one from "
+                           "the Watermark tab, or deploy with the live detector "
+                           "(SYNTHID_VERIFY_MODE=live).")}
     thr = tbl.get("threshold")
-    return {**base, "mark_found": True, "verified": bool(hit["watermarked"]),
-            "signature_ok": None, "score": hit["score"], "threshold": thr,
-            "tokens_scored": hit.get("tokens"),
+    return {**base, "mark_found": True, "engine": "table",
+            "verified": bool(hit["watermarked"]), "signature_ok": None,
+            "score": hit["score"], "threshold": thr, "tokens_scored": hit.get("tokens"),
             "detail": (f"score {hit['score']:.4f} "
-                       f"{'>=' if hit['watermarked'] else '<'} threshold {thr:.4f}")}
+                       f"{'>=' if hit['watermarked'] else '<'} threshold {thr:.4f} "
+                       f"(pre-computed)")}
 
 
 def _fetch_verify_doc(tags):

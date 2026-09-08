@@ -79,6 +79,47 @@ gcloud run deploy xboundary-demo \
 You get a `https://xboundary-demo-XXXX.run.app` URL. Test all four tabs there
 first.
 
+### (optional) Live synthid-1 detection
+
+By default the Verify tab scores `synthid-1` text from a pre-computed table
+(`samples/synthid-1/verify-scores.json`) -- it only knows the pre-generated
+samples. `SYNTHID_VERIFY_MODE` picks the engine: `auto` (default -- live if the
+deps + keys are present, else the table), `live` (require it), `table` (always
+the table). Both engines are the same `tools/synthid.py` code, so a sample
+scores identically either way.
+
+To score **any** pasted text you need the detector in the image. It's the
+Dockerfile `SYNTHID_LIVE=1` build arg -- CPU-only `torch` + `transformers`
+(~400 MB; the SynthID detector uses the tokenizer + logits-processor only, no
+model weights), plus the Qwen tokenizer baked in so nothing downloads at
+runtime. `gcloud run deploy --source` can't pass a Docker build arg, so build
+and push the image yourself:
+
+```bash
+# the 24-int key list, same file tools/synthid.py uses
+gcloud secrets create synthid-keys --data-file=synthid-1.keys.json
+gcloud secrets add-iam-policy-binding synthid-keys \
+  --member="serviceAccount:$SA" --role=roles/secretmanager.secretAccessor
+
+REPO=us-central1-docker.pkg.dev/$(gcloud config get-value project)/cloud-run-source-deploy
+docker build --build-arg SYNTHID_LIVE=1 -t $REPO/xboundary-demo:live .
+docker push $REPO/xboundary-demo:live
+
+gcloud run deploy xboundary-demo \
+  --image $REPO/xboundary-demo:live \
+  --region us-central1 \
+  --allow-unauthenticated --max-instances 1 --min-instances 0 \
+  --memory 1Gi --cpu 1 \
+  --set-env-vars DEMO_KEY_LOCATOR=1._watermark-text.demo.terryzink.com,DEMO_KEY_LOCATOR_2=2._watermark-text.demo.terryzink.com,SYNTHID_VERIFY_MODE=live \
+  --set-secrets DEMO_PRIVATE_KEY_PEM=demo-wm-key:latest,DEMO_PRIVATE_KEY_PEM_2=demo-wm-key-2:latest,SYNTHID_KEYS_JSON=synthid-keys:latest
+```
+
+- Bump `--memory` to `1Gi`: torch + tokenizer + the 2^16 sampling table.
+- Cold start with the detector is ~8-12s on the first `synthid-1` verify
+  (importing torch, building the table); cached in-process after that.
+- Local dev: `SYNTHID_KEYS_FILE=~/path/synthid-1.keys.json python3 demo/server.py`
+  (with `tools/requirements-synthid.txt` installed) gets you live scoring too.
+
 ## 3. (optional) Map your subdomain
 
 ```bash

@@ -370,6 +370,9 @@ $("v-go").addEventListener("click", async () => {
         ? (r.verified ? "score above threshold" : "score below threshold")
         : (r.detail && !r.verified ? "signature does not verify"
           : r.signature_ok ? "signature cryptographically valid" : "not checked")],
+      ["detector", r.engine === "live" ? "SynthID masked-mean, run live"
+                 : r.engine === "table" ? "pre-computed (this server has no detector installed)"
+                 : undefined],
       ["score", r.score != null ? r.score.toFixed(6) : undefined],
       ["threshold", r.threshold != null ? r.threshold.toFixed(6) : undefined],
       ["tokens scored", r.tokens_scored || undefined],
