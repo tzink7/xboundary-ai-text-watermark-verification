@@ -26,11 +26,21 @@ download the finished `samples/synthid-1/` folder. No parameter duplication.
 
 ## Cell 1 -- clone + install
 
+Always starts from `/content` and wipes any previous clone, so re-running it can
+never nest directories.
+
 ```python
+%cd /content
+!rm -rf xboundary-ai-text-watermark-verification
 !git clone --depth 1 -q https://github.com/tzink7/xboundary-ai-text-watermark-verification.git
 %cd xboundary-ai-text-watermark-verification
+!git log --oneline -1        # expect f0a2332 or newer
 !pip -q install -r tools/requirements-synthid.txt
 ```
+
+Every later cell that touches files should begin with
+`%cd /content/xboundary-ai-text-watermark-verification` so you are always at the
+repo root, never inside `samples/` or `/content/smoke`.
 
 ## Cell 2 -- upload the keys
 
@@ -61,6 +71,7 @@ the keys or the transformers version.
 ## Cell 4 -- the build (~15 min on a T4)
 
 ```python
+%cd /content/xboundary-ai-text-watermark-verification
 !python tools/synthid_smoke.py --build --device cuda --dtype float16 \
     --model Qwen/Qwen2.5-3B-Instruct \
     --samples 10 --controls 40 --num-tokens 650 --fpr 0.02 \
@@ -92,10 +103,11 @@ Then confirm the files are actually there before moving on:
 ## Cell 5 -- download
 
 ```python
+%cd /content/xboundary-ai-text-watermark-verification
 import shutil
-shutil.make_archive("synthid-1-samples", "zip", "samples/synthid-1")
+shutil.make_archive("/content/synthid-1-samples", "zip", "samples/synthid-1")
 from google.colab import files
-files.download("synthid-1-samples.zip")
+files.download("/content/synthid-1-samples.zip")
 ```
 
 ---
