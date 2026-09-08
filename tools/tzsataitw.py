@@ -8,7 +8,9 @@ verification-00. Companion to watermark_dns_tool.py (which distributes keys and
 checks records); this tool actually marks and verifies text.
 
     --generate     embed a watermark in text, using an Ed25519 private key
-    --verify       check a watermark, using the matching public key
+    --co-sign      "sign again": add a signed manifest over text that already
+                   carries another mark (e.g. synthid-1) -- a double signature
+    --verify       check a watermark or a manifest, using the matching public key
     --inspect      show the embedded payload(s), no crypto
     --walkthrough  how it works
 
@@ -30,6 +32,16 @@ FRAME (in the channel's bit stream)
   payload = locator_len(1) | locator | signature(64)
   MAGIC is "ZW1\0" for tzsataitw-1, "HG1\0" for tzsataitw-2 -- so a decoded
   frame self-identifies which algorithm made it.
+
+MANIFEST FRAME (double signature -- zero-width only, MAGIC "ZWM\0")
+  payload = mver(1) | n_marks(1)
+            n_marks * ( scheme_len(1) | scheme | locator_len(1) | locator )
+            sig_locator_len(1) | sig_locator | signature(64)
+  --co-sign builds this over text that already carries another mark. The
+  signature covers b"tzsataitw/manifest/v1\n" + (everything before the sig) +
+  b"\0" + canonical_text. --verify checks the outer signature against the key at
+  sig_locator, then (with --inner-verify) follows each referenced mark's DNS
+  record. If the outer signature fails the manifest pointers are NOT trusted.
 
 SIGNED MESSAGE (Ed25519, 64 bytes)
   b"<algorithm>\n" + canonical_text
@@ -83,6 +95,18 @@ FRAME_VERSION = 2                        # v2: signed message is <algo> + text o
 FRAME_FIXED = 4 + 1 + 2 + 4              # magic + ver + len(2) + crc32(4)
 MAX_PAYLOAD = 4096
 SIG_LEN = 64
+
+# ---- double-signature manifest ("sign once, then sign again") ----------------
+# A tzsataitw-1 frame whose payload is a signed *manifest* -- a list of the marks
+# already on the text plus the locator of the key that signed the manifest. Used
+# when one party watermarks with another scheme (e.g. synthid-1) and then signs
+# the result with tzsataitw. The zero-width frame is the entry point: a verifier
+# with only the raw text recovers where to check the signature AND where each
+# referenced mark is verified. Carried in zero-width only (the homoglyph channel
+# lacks the capacity).
+ZWM_MAGIC = b"ZWM\x00"                   # distinct magic -> unambiguous vs a plain frame
+MANIFEST_VERSION = 1
+MANIFEST_DOMAIN_SEP = b"tzsataitw/manifest/v1\n"   # domain-separates the signed bytes
 
 # ---- channel character sets ---------------------------------------------------
 
@@ -231,6 +255,74 @@ def unpack_payload(payload):
 
 
 # --------------------------------------------------------------------------- #
+# manifest payload (double-signature)                                          #
+# --------------------------------------------------------------------------- #
+# wire layout (inside a ZWM frame):
+#   mver(1) | n_marks(1)
+#   n_marks * ( scheme_len(1) | scheme | locator_len(1) | locator )
+#   sig_locator_len(1) | sig_locator
+#   signature(64)                       -- Ed25519 over MANIFEST_DOMAIN_SEP +
+#                                          (everything above the signature) +
+#                                          b"\0" + canonical_text(text)
+
+def _lp(s):
+    b = s.encode("ascii")
+    if len(b) > 255:
+        raise ValueError(f"manifest field too long (>255 bytes): {s!r}")
+    return bytes([len(b)]) + b
+
+
+def pack_manifest_prefix(marks, sig_locator):
+    """The bytes before the signature: version, the marks list, sig_locator."""
+    if not (1 <= len(marks) <= 255):
+        raise ValueError("a manifest needs 1..255 marks")
+    body = bytes([MANIFEST_VERSION, len(marks)])
+    for scheme, locator in marks:
+        body += _lp(scheme) + _lp(locator)
+    body += _lp(sig_locator)
+    return body
+
+
+def manifest_signing_bytes(prefix, canon):
+    return MANIFEST_DOMAIN_SEP + prefix + b"\x00" + canon.encode("utf-8")
+
+
+def pack_manifest(marks, sig_locator, sig):
+    if len(sig) != SIG_LEN:
+        raise ValueError(f"signature must be {SIG_LEN} bytes")
+    return pack_manifest_prefix(marks, sig_locator) + sig
+
+
+def unpack_manifest(payload):
+    """-> (marks[list of (scheme, locator)], sig_locator, sig, prefix_bytes)."""
+    if len(payload) < 2:
+        raise ValueError("manifest payload truncated")
+    ver, n = payload[0], payload[1]
+    if ver != MANIFEST_VERSION:
+        raise ValueError(f"unsupported manifest version {ver}")
+    i = [2]
+
+    def take():
+        if i[0] >= len(payload):
+            raise ValueError("manifest field truncated")
+        ln = payload[i[0]]
+        i[0] += 1
+        if i[0] + ln > len(payload):
+            raise ValueError("manifest field truncated")
+        s = payload[i[0]:i[0] + ln].decode("ascii")
+        i[0] += ln
+        return s
+
+    marks = [(take(), take()) for _ in range(n)]
+    sig_locator = take()
+    prefix = payload[:i[0]]
+    sig = payload[i[0]:]
+    if len(sig) != SIG_LEN:
+        raise ValueError(f"manifest signature is {len(sig)} bytes, expected {SIG_LEN}")
+    return marks, sig_locator, sig, prefix
+
+
+# --------------------------------------------------------------------------- #
 # channels                                                                     #
 # --------------------------------------------------------------------------- #
 
@@ -259,6 +351,8 @@ def _spread_zw(text, mark):
 class ZeroWidthChannel:
     name = "tzsataitw-1"
     magic = b"ZW1\x00"
+    # frames this channel can carry: a plain signature frame, or a manifest frame
+    frame_specs = ((b"ZW1\x00", "signature"), (ZWM_MAGIC, "manifest"))
     summary = "invisible zero-width characters (U+200B = 0, U+200C = 1)"
 
     def embed(self, base_text, bits):
@@ -279,6 +373,7 @@ class ZeroWidthChannel:
 class HomoglyphChannel:
     name = "tzsataitw-2"
     magic = b"HG1\x00"
+    frame_specs = ((b"HG1\x00", "signature"),)
     summary = "Cyrillic look-alike letters (a->а, e->е, o->о, ...)"
 
     def embed(self, base_text, bits):
@@ -312,24 +407,27 @@ ALGORITHMS = {c.name: c for c in (ZeroWidthChannel(), HomoglyphChannel())}
 
 def extract_frames(text):
     """Every embedded frame, across all channels: list of dicts
-    {algorithm, magic, bit_offset, payload}."""
+    {algorithm, kind, magic, bit_offset, payload}. `kind` is "signature" or
+    "manifest"."""
     out = []
     for name, ch in ALGORITHMS.items():
         bits = ch.extract(text)
         if not bits:
             continue
-        magic_bits = _bytes_to_bits(ch.magic)
-        i = 0
-        while True:
-            j = bits.find(magic_bits, i)
-            if j < 0:
-                break
-            payload = parse_frame(ch.magic, _bits_to_bytes(bits[j:]))
-            if payload is not None:
-                out.append({"algorithm": name, "bit_offset": j, "payload": payload})
-                i = j + 8
-            else:
-                i = j + 1
+        for magic, kind in getattr(ch, "frame_specs", ((ch.magic, "signature"),)):
+            magic_bits = _bytes_to_bits(magic)
+            i = 0
+            while True:
+                j = bits.find(magic_bits, i)
+                if j < 0:
+                    break
+                payload = parse_frame(magic, _bits_to_bytes(bits[j:]))
+                if payload is not None:
+                    out.append({"algorithm": name, "kind": kind, "magic": magic,
+                                "bit_offset": j, "payload": payload})
+                    i = j + 8
+                else:
+                    i = j + 1
     return out
 
 
@@ -524,6 +622,81 @@ def cmd_generate(args):
 
 
 # --------------------------------------------------------------------------- #
+# --co-sign  (the "sign again" half of a double signature)                     #
+# --------------------------------------------------------------------------- #
+
+def _write_text_out(text, out_path):
+    if out_path:
+        with open(out_path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        return out_path
+    sys.stdout.write(text if text.endswith("\n") else text + "\n")
+    return "stdout"
+
+
+def _parse_over(entries):
+    marks = []
+    for e in entries or []:
+        scheme, sep, locator = e.partition("@")
+        scheme, locator = scheme.strip(), locator.strip()
+        if not sep or not scheme or not locator:
+            sys.exit(f"error: --over expects SCHEME@LOCATOR, got {e!r}")
+        marks.append((scheme, locator))
+    return marks
+
+
+def cmd_co_sign(args):
+    if not args.privkey:
+        sys.exit("error: --co-sign needs --privkey (the Ed25519 key for the outer signature)")
+    if not os.path.isfile(args.privkey):
+        sys.exit(f"error: private key file not found: {args.privkey}")
+
+    marks = _parse_over(args.over)
+    if not marks:
+        sys.exit("error: --co-sign needs at least one --over SCHEME@LOCATOR -- the mark(s) "
+                 "already on the text (e.g. synthid-1@4._watermark-text.example.ai)")
+
+    selector, domain = args.selector, args.domain
+    name_sel, name_dom = _locator_from_key_name(args.privkey)
+    if selector is None:
+        selector = name_sel
+    if not domain:
+        domain = name_dom
+    if selector is None or not domain:
+        sys.exit("error: --co-sign needs --domain and --selector (where the outer key is "
+                 "published) -- the manifest signature is not verifiable without a locator")
+    sig_locator = f"{selector}.{WELL_KNOWN_LABEL}.{domain.strip('.')}"
+
+    raw = read_input_text(args.input, use_sample=args.sample)
+    if args.sample:
+        print("# --sample: co-signing the built-in sample paragraph (no inner mark on it -- "
+              "for wiring tests only).", file=sys.stderr)
+    prior = [f for f in extract_frames(raw) if f["algorithm"].startswith("tzsataitw")]
+    if prior:
+        print(f"# note: input already carries a tzsataitw {prior[0]['kind']} frame; "
+              f"stripping it and re-marking.", file=sys.stderr)
+
+    base = strip_marks(raw)
+    canon = canonical_text(raw)
+    prefix = pack_manifest_prefix(marks, sig_locator)
+    sig = ed25519_sign(args.privkey, manifest_signing_bytes(prefix, canon))
+    payload = prefix + sig
+    frame_bits = _bytes_to_bits(build_frame(ZWM_MAGIC, payload))
+    watermarked = ZeroWidthChannel().embed(base, frame_bits)
+
+    dest = _write_text_out(watermarked, args.out)
+    src = f"--input {args.out}" if args.out else "< the-text"
+    print(f"# tzsataitw-1 manifest: {len(payload)}-byte payload, {len(frame_bits)} "
+          f"zero-width chars -> {dest}", file=sys.stderr)
+    print(f"#   signed by : {sig_locator}", file=sys.stderr)
+    for s, loc in marks:
+        print(f"#   over mark : {s} @ {loc}", file=sys.stderr)
+    print(f"#   canonical : {len(canon)} chars, "
+          f"sha256 {hashlib.sha256(canon.encode('utf-8')).hexdigest()[:16]}...", file=sys.stderr)
+    print(f"#   verify    : tzsataitw.py --verify {src}", file=sys.stderr)
+
+
+# --------------------------------------------------------------------------- #
 # --verify                                                                     #
 # --------------------------------------------------------------------------- #
 
@@ -617,8 +790,16 @@ def cmd_verify(args):
     text = read_input_text(args.input)
     frames = extract_frames(text)
 
+    # a manifest frame (double signature) takes precedence over a plain one
+    mf = next((f for f in frames if f["kind"] == "manifest"), None)
+    if mf is not None:
+        _verify_manifest(text, mf, args)
+        return
+
     parsed = None
     for fr in frames:
+        if fr["kind"] != "signature":
+            continue
         try:
             locator, sig = unpack_payload(fr["payload"])
         except ValueError:
@@ -651,6 +832,217 @@ def cmd_verify(args):
     if "detail" in result:
         sys.exit(3)
     sys.exit(0 if result.get("verified") else 2)
+
+
+# --------------------------------------------------------------------------- #
+# --verify: the double-signature manifest path                                 #
+# --------------------------------------------------------------------------- #
+
+_ZW_ONLY = re.compile("[​‌‍⁠]")
+
+
+def _canon_tokens(text, tokens):
+    """Apply a Section 6.6 `canonicalization` array (for an inner k=symmetric
+    verify-endpoint call)."""
+    for t in tokens or []:
+        if t == "strip-zero-width":
+            text = _ZW_ONLY.sub("", text)
+        elif t == "nfc":
+            text = unicodedata.normalize("NFC", text)
+        elif t == "trim":
+            text = text.strip()
+        else:
+            raise ValueError(f"unknown canonicalization token {t!r}")
+    return text
+
+
+def _http_bytes(url, data=None, timeout=8):
+    import urllib.request
+    headers = {"User-Agent": "tzsataitw", "Accept": "application/json, */*"}
+    if data is not None:
+        headers["Content-Type"] = "text/plain; charset=utf-8"
+        data = data.encode("utf-8")
+    req = urllib.request.Request(url, data=data, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:   # noqa: S310 (user's own machine)
+        return resp.read(1_000_000)
+
+
+def _verify_inner(scheme, locator, stripped_text, mode):
+    """Check one referenced mark. `mode`: 'dns' (resolve + report) or 'endpoint'
+    (also call a k=symmetric verify endpoint)."""
+    out = {"scheme": scheme, "locator": locator, "verified": None}
+    try:
+        recs = dig_txt(locator)
+    except (RuntimeError, FileNotFoundError) as exc:
+        return {**out, "verified": False, "detail": str(exc)}
+    tags = next((t for t in (parse_record_tags(r) for r in recs) if t.get("a")), None)
+    if tags is None:
+        return {**out, "verified": False, "detail": f"no _watermark-text record at {locator}"}
+    out["record_algorithm"] = tags.get("a")
+    if tags.get("a") != scheme:
+        return {**out, "verified": False,
+                "detail": f"record says a={tags.get('a')!r}, the manifest claims {scheme!r}"}
+    out["k"] = tags.get("k")
+    out["d"] = tags.get("d")
+
+    if mode != "endpoint":
+        if tags.get("k") == "symmetric":
+            out["note"] = (f"k=symmetric -- verify at the endpoint in {tags.get('d')} "
+                           f"(re-run with --inner-verify endpoint, or POST the "
+                           f"canonicalized text there yourself)")
+        else:
+            out["note"] = (f"run: tzsataitw.py --verify (for tzsataitw-*) or the scheme's "
+                           f"own verifier against {locator}")
+        return out
+
+    if tags.get("k") != "symmetric" or not tags.get("d"):
+        return {**out, "detail": f"{scheme} at {locator} is not k=symmetric with a d= "
+                                 f"document; use that scheme's own verifier"}
+    try:
+        doc = json.loads(_http_bytes(tags["d"]))
+        ctext = _canon_tokens(stripped_text, doc.get("canonicalization") or [])
+        resp = json.loads(_http_bytes(doc["verify"], data=ctext))
+    except Exception as exc:                              # noqa: BLE001
+        return {**out, "verified": False, "detail": f"verify-endpoint call failed: {exc}"}
+    out.update(verified=bool(resp.get("watermarked")), score=resp.get("score"),
+               threshold=resp.get("threshold"), verify_endpoint=doc.get("verify"),
+               via="d= verify endpoint")
+    return out
+
+
+def _verify_manifest(text, frame, args):
+    try:
+        marks, sig_locator, sig, prefix = unpack_manifest(frame["payload"])
+    except ValueError as exc:
+        _emit_manifest({"mark_found": True, "kind": "manifest",
+                        "detail": f"manifest payload is malformed: {exc}"}, args.json)
+        sys.exit(3)
+
+    canon = canonical_text(text)
+    msg = manifest_signing_bytes(prefix, canon)
+
+    key_locator = sig_locator
+    if (args.domain is None) != (args.selector is None):
+        sys.exit("error: --domain and --selector must be given together")
+    if args.domain and args.selector is not None:
+        key_locator = f"{args.selector}.{WELL_KNOWN_LABEL}.{args.domain.strip('.')}"
+
+    outer = {"sig_locator": sig_locator, "key_lookup": key_locator,
+             "signature_hex": sig.hex(), "canonical_chars": len(canon),
+             "canonical_sha256": hashlib.sha256(canon.encode("utf-8")).hexdigest(),
+             "signature_ok": False, "verified": False}
+    try:
+        if args.pubkey:
+            outer["signature_ok"] = ed25519_verify(args.pubkey, msg, sig, "PEM")
+            outer["verified"] = outer["signature_ok"]
+            outer["key_source"] = f"local key file {args.pubkey}"
+        else:
+            der, tags = key_der_from_dns(key_locator)
+            outer["record_algorithm"] = tags.get("a")
+            outer["key_source"] = f"the DNS TXT record at {key_locator}"
+            kpath = _tmp(der)
+            try:
+                outer["signature_ok"] = ed25519_verify(kpath, msg, sig, "DER")
+            finally:
+                try:
+                    os.unlink(kpath)
+                except OSError:
+                    pass
+            if tags.get("a") and not str(tags["a"]).startswith("tzsataitw"):
+                outer["algorithm_mismatch"] = (
+                    f"the record at {key_locator} publishes this key for a={tags['a']!r}, "
+                    f"not a tzsataitw algorithm")
+                outer["verified"] = False
+            else:
+                outer["verified"] = outer["signature_ok"]
+    except (RuntimeError, FileNotFoundError) as exc:
+        outer["detail"] = str(exc)
+
+    result = {
+        "mark_found": True, "kind": "manifest",
+        "channel": ALGORITHMS["tzsataitw-1"].summary,
+        "bit_offset": frame["bit_offset"], "payload_bytes": len(frame["payload"]),
+        "outer": outer,
+        "marks": [{"scheme": s, "locator": loc} for s, loc in marks],
+    }
+
+    if outer["verified"] and args.inner_verify != "off":
+        stripped = strip_marks(text)
+        result["marks"] = [_verify_inner(m["scheme"], m["locator"], stripped, args.inner_verify)
+                           for m in result["marks"]]
+    elif not outer["verified"]:
+        result["inner_skipped"] = ("the outer signature did not verify -- the manifest's "
+                                   "pointers are untrusted and were not followed")
+
+    _emit_manifest(result, args.json)
+    if outer.get("detail"):
+        sys.exit(3)
+    ok = outer["verified"]
+    if args.inner_verify == "endpoint":
+        ok = ok and all(m.get("verified") for m in result["marks"])
+    sys.exit(0 if ok else 2)
+
+
+def _emit_manifest(result, as_json):
+    if as_json:
+        print(json.dumps(result, indent=2))
+        return
+    print("tzsataitw-1 manifest  --  double-signature verification")
+    if "detail" in result and "outer" not in result:
+        print(f"  => {result['detail']}")
+        return
+
+    o = result["outer"]
+    if o.get("detail"):
+        outer_cell = f"could not check ({o['detail']})"
+    elif o.get("signature_ok") and o.get("verified"):
+        outer_cell = "VALID"
+    elif o.get("signature_ok"):
+        outer_cell = f"signature valid, but {o.get('algorithm_mismatch', 'the record rejects it')}"
+    else:
+        outer_cell = "INVALID -- does not verify"
+    rows = [
+        ("outer signature", outer_cell),
+        ("signed by", o["sig_locator"]),
+        ("verified against", o.get("key_source", "-")),
+    ]
+    if o.get("record_algorithm"):
+        rows.append(("record a=", o["record_algorithm"]))
+    rows.append(("canonical text", f"{o['canonical_chars']} chars, "
+                                   f"sha256 {o['canonical_sha256'][:16]}..."))
+    width = max(len(k) for k, _ in rows)
+    for k, v in rows:
+        print(f"  {k.ljust(width)} : {v}")
+
+    print(f"  referenced marks ({len(result['marks'])}):")
+    for m in result["marks"]:
+        line = f"    - {m['scheme']} @ {m['locator']}"
+        if m.get("verified") is True:
+            extra = ""
+            if m.get("score") is not None:
+                extra = f" (score {m['score']:.4f} >= {m.get('threshold', 0):.4f})"
+            line += f"  -> VALID{extra}"
+        elif m.get("verified") is False:
+            line += f"  -> NOT VERIFIED ({m.get('detail', 'failed')})"
+        elif m.get("note"):
+            line += f"\n        {m['note']}"
+        print(line)
+    if result.get("inner_skipped"):
+        print(f"  ! {result['inner_skipped']}")
+
+    print()
+    if o.get("verified"):
+        n_ok = sum(1 for m in result["marks"] if m.get("verified") is True)
+        n_checked = sum(1 for m in result["marks"] if m.get("verified") is not None)
+        tail = (f"; {n_ok}/{n_checked} referenced mark(s) verified" if n_checked
+                else "; referenced marks not checked (see above)")
+        print(f"  reads as: this text was double-signed -- a VALID tzsataitw-1 manifest "
+              f"from {o['sig_locator']}{tail}")
+    elif o.get("signature_ok"):
+        print(f"  reads as: REJECTED -- {o.get('algorithm_mismatch', 'the record does not authorize this')}")
+    else:
+        print("  reads as: the manifest signature does NOT verify -- forged, corrupted, "
+              "or the visible text changed after signing")
 
 
 def _emit_verify(result, as_json):
@@ -735,15 +1127,25 @@ def cmd_inspect(args):
     }
     out = {"channel_chars": counts, "frames": []}
     for fr in frames:
-        entry = {"algorithm": fr["algorithm"], "bit_offset": fr["bit_offset"],
+        entry = {"algorithm": fr["algorithm"], "kind": fr["kind"],
+                 "bit_offset": fr["bit_offset"],
                  "payload_bytes": len(fr["payload"]), "payload_hex": fr["payload"].hex()}
         try:
-            locator, sig = unpack_payload(fr["payload"])
-            entry["locator"] = locator
-            entry["signature_hex"] = sig.hex()
-            entry["signature_b64"] = base64.b64encode(sig).decode("ascii")
-            entry["signed_over"] = f'b"{fr["algorithm"]}\\n" + canonical_text  ' \
-                                   f'(use --verify to compute & check)'
+            if fr["kind"] == "manifest":
+                marks, sig_locator, sig, _ = unpack_manifest(fr["payload"])
+                entry["marks"] = [{"scheme": s, "locator": loc} for s, loc in marks]
+                entry["sig_locator"] = sig_locator
+                entry["signature_hex"] = sig.hex()
+                entry["signature_b64"] = base64.b64encode(sig).decode("ascii")
+                entry["signed_over"] = ('tzsataitw/manifest/v1 + marks + sig_locator + '
+                                        'canonical_text  (use --verify to check)')
+            else:
+                locator, sig = unpack_payload(fr["payload"])
+                entry["locator"] = locator
+                entry["signature_hex"] = sig.hex()
+                entry["signature_b64"] = base64.b64encode(sig).decode("ascii")
+                entry["signed_over"] = f'b"{fr["algorithm"]}\\n" + canonical_text  ' \
+                                       f'(use --verify to compute & check)'
         except ValueError as exc:
             entry["error"] = str(exc)
         out["frames"].append(entry)
@@ -756,15 +1158,21 @@ def cmd_inspect(args):
         print(f"  {k}: {v}")
     print(f"  frames recovered: {len(frames)}")
     for i, entry in enumerate(out["frames"], 1):
-        print(f"  [{i}] {entry['algorithm']}, bit offset {entry['bit_offset']}, "
-              f"{entry['payload_bytes']} bytes")
-        if "signature_hex" in entry:
+        print(f"  [{i}] {entry['algorithm']} {entry['kind']}, bit offset "
+              f"{entry['bit_offset']}, {entry['payload_bytes']} bytes")
+        if entry.get("error"):
+            print(f"      error     : {entry['error']}")
+        elif entry["kind"] == "manifest":
+            print(f"      signed by      : {entry['sig_locator']}")
+            for m in entry["marks"]:
+                print(f"      over mark      : {m['scheme']} @ {m['locator']}")
+            print(f"      signed over    : {entry['signed_over']}")
+            print(f"      signature b64  : {entry['signature_b64']}")
+        else:
             print(f"      locator        : {entry['locator'] or '(none -- bare signature)'}")
             print(f"      signed over    : b\"{entry['algorithm']}\\n\" + canonical_text")
             print(f"      signature hex  : {entry['signature_hex']}")
             print(f"      signature b64  : {entry['signature_b64']}")
-        else:
-            print(f"      error     : {entry['error']}")
     if not frames and any(counts.values()):
         print("  (channel characters are present but none form a valid frame)")
 
@@ -826,6 +1234,25 @@ VERIFY DISPATCH
   channel to extract the frame (which holds the locator) before you can do the
   DNS lookup at all.
 
+DOUBLE SIGNATURE ("sign once, then sign again")
+  --co-sign takes text that already carries another watermark (e.g. a synthid-1
+  statistical mark from generation) and adds a signed tzsataitw-1 *manifest*: a
+  zero-width frame listing that mark plus the locator of the key signing the
+  manifest. The manifest is the entry point -- a verifier with only the raw text
+  recovers where to check the signature AND where each referenced mark is
+  verified, with no out-of-band "which provider?" input.
+
+  tzsataitw.py --co-sign --input generated.txt --privkey KEY.pem \
+      --domain example.ai --selector 1 \
+      --over synthid-1@4._watermark-text.model.example --out double.txt
+
+  tzsataitw.py --verify --input double.txt                    # outer sig + resolve marks
+  tzsataitw.py --verify --input double.txt --inner-verify endpoint   # + call the mark's verify endpoint
+
+  The two layers are cryptographically bound: the outer signature covers the
+  text INCLUDING the synthid statistical bias, so paraphrasing enough to wash
+  out the inner mark also breaks the outer signature.
+
 COMMANDS
   # tzsataitw-1, locator read from the key filename
   tzsataitw.py --generate --privkey 1._watermark-text.example.ai.private.pem \
@@ -839,6 +1266,8 @@ COMMANDS
   tzsataitw.py --verify --pubkey KEY.pub.pem --input article.wm.txt   # offline
   tzsataitw.py --verify --input bare.wm.txt --domain example.ai --selector 1
   tzsataitw.py --inspect --input article.wm.txt
+  tzsataitw.py --co-sign --input generated.txt --privkey KEY.pem \
+      --domain example.ai --selector 1 --over synthid-1@4._watermark-text.model.example
 ================================================================================
 """
 
@@ -854,6 +1283,7 @@ def cmd_walkthrough(args):
 MODE_HANDLERS = [
     ("walkthrough", cmd_walkthrough),
     ("generate", cmd_generate),
+    ("co_sign", cmd_co_sign),
     ("verify", cmd_verify),
     ("inspect", cmd_inspect),
 ]
@@ -876,8 +1306,13 @@ def build_parser():
     m.add_argument("--generate", action="store_true",
                    help="embed a watermark (needs --privkey; locator from --domain/--selector "
                         "or the key filename)")
+    m.add_argument("--co-sign", action="store_true",
+                   help="add a signed tzsataitw-1 manifest over text that already carries "
+                        "another mark -- the 'sign again' half of a double signature (needs "
+                        "--privkey, --domain/--selector, and --over)")
     m.add_argument("--verify", action="store_true",
-                   help="verify a watermark (channel auto-detected; key from DNS or --pubkey)")
+                   help="verify a watermark or a double-signature manifest (auto-detected; "
+                        "key from DNS or --pubkey)")
     m.add_argument("--inspect", action="store_true",
                    help="show the embedded payload(s) without checking the signature")
 
@@ -893,10 +1328,17 @@ def build_parser():
     g.add_argument("--selector", type=int, help="selector number, paired with --domain")
     g.add_argument("--no-locator", action="store_true",
                    help="--generate: embed a bare signature, no locator (smaller mark)")
+    g.add_argument("--over", action="append", metavar="SCHEME@LOCATOR",
+                   help="--co-sign: a mark already on the text, e.g. "
+                        "synthid-1@4._watermark-text.example.ai (repeatable)")
+    g.add_argument("--inner-verify", choices=("off", "dns", "endpoint"), default="dns",
+                   help="--verify (manifest): how far to check the referenced marks. "
+                        "off = outer signature only; dns = resolve each record (default); "
+                        "endpoint = also call a k=symmetric mark's verify endpoint (network)")
     g.add_argument("--input", help="read text from this file (default: stdin)")
     g.add_argument("--sample", action="store_true",
-                   help="--generate: watermark the built-in sample paragraph")
-    g.add_argument("--out", help="--generate: write watermarked text here (default: stdout)")
+                   help="--generate / --co-sign: use the built-in sample paragraph")
+    g.add_argument("--out", help="--generate / --co-sign: write here (default: stdout)")
     g.add_argument("--json", action="store_true", help="--verify / --inspect: machine-readable output")
     return p
 

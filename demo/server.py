@@ -381,8 +381,11 @@ def _more_informative(a, b):
 
 
 def _tz_frame(text):
-    """First readable tzsataitw frame: (fr, embedded_locator, sig) or None."""
+    """First readable tzsataitw *signature* frame: (fr, embedded_locator, sig) or
+    None. Manifest frames (double signatures) are handled separately."""
     for fr in tz.extract_frames(text):
+        if fr.get("kind") != "signature":
+            continue
         try:
             loc, sig = tz.unpack_payload(fr["payload"])
             return fr, loc, sig
