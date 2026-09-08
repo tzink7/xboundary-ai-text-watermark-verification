@@ -316,13 +316,14 @@ def verify_text(text: str, pubkey_spki_b64: str, max_offsets: int | None = None)
     base = {"algorithm": ALGORITHM_ID, "canonical_chars": n}
 
     if n < MIN_WATERMARK_CHARS:
-        return {**base, "verified": False, "offsets_scanned": 0,
+        return {**base, "verified": False, "mark_shaped": False, "offsets_scanned": 0,
                 "reason": f"text is {n} chars; fairoze-1 needs at least "
                           f"{MIN_WATERMARK_CHARS}"}
 
     last_offset = n - MIN_WATERMARK_CHARS
     limit = last_offset if max_offsets is None else min(last_offset, max_offsets - 1)
 
+    mark_shaped = False        # some offset yielded an RS-decodable codeword
     for offset in range(limit + 1):
         window = canon[offset:]
         message, bits = windows_to_bits(window)
@@ -333,15 +334,21 @@ def verify_text(text: str, pubkey_spki_b64: str, max_offsets: int | None = None)
             sig = decode_payload(bits, digest)
         except PayloadError:
             continue
+        mark_shaped = True
         if fz_verify(digest, sig, pubkey_spki_b64):
-            return {**base, "verified": True, "offset": offset, "message": message,
-                    "signature_hex": sig.hex(), "message_digest_hex": digest.hex(),
+            return {**base, "verified": True, "mark_shaped": True, "offset": offset,
+                    "message": message, "signature_hex": sig.hex(),
+                    "message_digest_hex": digest.hex(),
                     "offsets_scanned": offset + 1,
                     "reason": "signature verifies under the given key"}
 
-    return {**base, "verified": False, "offsets_scanned": limit + 1,
-            "reason": f"no fairoze-1 watermark verifiable under this key "
-                      f"(scanned {limit + 1} offset(s))"}
+    return {**base, "verified": False, "mark_shaped": mark_shaped,
+            "offsets_scanned": limit + 1,
+            "reason": (f"a fairoze-1 codeword was recovered but its signature does not "
+                       f"verify under this key (wrong provider, or the text was edited)"
+                       if mark_shaped else
+                       f"no fairoze-1 watermark in this text "
+                       f"(no recoverable codeword in {limit + 1} offset(s))")}
 
 
 def load_pubkey_b64(path: str) -> str:

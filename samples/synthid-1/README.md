@@ -58,3 +58,12 @@ python tools/synthid.py --calibrate --negatives 'samples/synthid-1/controls/*.tx
 ```
 
 (needs `torch` + `transformers` — see `tools/requirements-synthid.txt`.)
+
+## `verify-scores.json`
+
+`verify-scores.json` is a pre-computed lookup the **demo server** uses to play the
+`verify` endpoint without running the detector inline (the Cloud Run image has no
+`torch`). It maps `sha256(canonicalized text)` → `{score, watermarked}` for the 10
+samples and 40 controls, using the same `["strip-zero-width", "nfc", "trim"]`
+canonicalization as the §6.6 `d=` document. Regenerate it whenever the samples or
+`synthid-1.config.json` change (scoring script needs the operator keys).

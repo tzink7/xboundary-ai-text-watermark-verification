@@ -31,6 +31,7 @@ import sys
 import threading
 import time
 import traceback
+import unicodedata
 import urllib.error
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -60,6 +61,8 @@ RATE_N, RATE_WINDOW = 60, 60   # requests per IP per window (seconds)
 MAX_SELECTORS = 25       # cap for feature (d)
 MAX_VERIFY_CRAWL = 10    # selectors to try in feature (b) when only a domain is given
 MAX_FAIROZE_OFFSETS = 200  # cap the fairoze-1 offset search
+
+SYMMETRIC_ALGOS = set(wdt.SYMMETRIC_ALGORITHMS)   # {"synthid-1"} -- k=symmetric, no p=
 
 SAMPLE_DIRS = {
     "fairoze-1": os.path.join(HERE, "..", "samples", "fairoze-1"),
@@ -389,7 +392,10 @@ def _tz_frame(text):
 
 
 def _fairoze_result(vt, record_locator):
-    r = {"mark_found": True, "algorithm": "fairoze-1",
+    # fairoze-1 is a signature scheme: for an independent verifier there is no
+    # "mark present but invalid" state it can distinguish from noise -- either a
+    # codeword verifies under the key or it doesn't. So mark_found == verified.
+    r = {"mark_found": bool(vt.get("verified")), "algorithm": "fairoze-1",
          "channel": "publicly-detectable statistical watermark (Fairoze)",
          "canonical_chars": vt["canonical_chars"], "record_locator": record_locator,
          "record_algorithm": "fairoze-1"}
@@ -398,14 +404,96 @@ def _fairoze_result(vt, record_locator):
                  signature_hex=vt.get("signature_hex"), offset=vt.get("offset"))
     else:
         r.update(verified=False, signature_ok=False, detail=vt["reason"])
-        if fzp and vt["canonical_chars"] < fzp.MIN_WATERMARK_CHARS:
-            r["mark_found"] = False
     return r
+
+
+# --------------------------------------------------------------------------- #
+# synthid-1 (k=symmetric): the demo server IS the provider, so it plays the    #
+# "verify" endpoint. It can't run the detector inline (needs the tokenizer +   #
+# transformers), so it answers from a pre-computed score table over the        #
+# pre-generated samples -- the same "pre-generated only" deal as fairoze-1.    #
+# --------------------------------------------------------------------------- #
+
+_ZW_RE = re.compile("[​‌‍⁠]")
+_synthid_scores_cache = None
+
+
+def _apply_canon(text, tokens):
+    for t in tokens or []:
+        if t == "strip-zero-width":
+            text = _ZW_RE.sub("", text)
+        elif t == "nfc":
+            text = unicodedata.normalize("NFC", text)
+        elif t == "trim":
+            text = text.strip()
+        else:
+            raise ValueError(f"unknown canonicalization token {t!r}")
+    return text
+
+
+def _synthid_scores():
+    global _synthid_scores_cache
+    if _synthid_scores_cache is None:
+        path = os.path.join(SAMPLE_DIRS["synthid-1"], "verify-scores.json")
+        try:
+            with open(path, encoding="utf-8") as fh:
+                _synthid_scores_cache = json.load(fh)
+        except OSError:
+            _synthid_scores_cache = {}
+    return _synthid_scores_cache or None
+
+
+def _synthid_verify(text, loc, verify_doc):
+    """Stand-in for a real SynthID `verify` endpoint: canonicalize per the d=
+    document, then look the text up in the pre-computed score table."""
+    tbl = _synthid_scores()
+    base = {"algorithm": "synthid-1", "record_locator": loc, "record_algorithm": "synthid-1",
+            "channel": "symmetric statistical watermark (SynthID-Text) -- no public key",
+            "verify_endpoint": (verify_doc or {}).get("verify")}
+    if not tbl:
+        return {**base, "mark_found": False,
+                "detail": "synthid-1 verification data is not available on this server"}
+    canon = (verify_doc or {}).get("canonicalization") or tbl.get("canonicalization")
+    try:
+        key = hashlib.sha256(_apply_canon(text, canon).encode("utf-8")).hexdigest()
+    except ValueError as exc:
+        return {**base, "mark_found": False, "detail": str(exc)}
+    hit = tbl.get("scores", {}).get(key)
+    if hit is None:
+        return {**base, "mark_found": False, "hint": "synthid-demo-samples-only",
+                "detail": ("this demo's verify endpoint recognizes only its pre-generated "
+                           "synthid-1 samples -- real SynthID detection needs the tokenizer "
+                           "and model this server does not run. Paste one of the samples from "
+                           "the Watermark tab.")}
+    thr = tbl.get("threshold")
+    return {**base, "mark_found": True, "verified": bool(hit["watermarked"]),
+            "signature_ok": None, "score": hit["score"], "threshold": thr,
+            "tokens_scored": hit.get("tokens"),
+            "detail": (f"score {hit['score']:.4f} "
+                       f"{'>=' if hit['watermarked'] else '<'} threshold {thr:.4f}")}
+
+
+def _fetch_verify_doc(tags):
+    """The k=symmetric d= document (Section 6.6), or None."""
+    if not tags.get("d"):
+        return None
+    try:
+        raw = safe_fetch(tags["d"])
+        obj = json.loads(raw)
+        return obj if isinstance(obj, dict) else None
+    except Exception:
+        return None
 
 
 def _verify_against_record(text, tz_frame, loc, tags):
     """Run whichever detector the record's a= names, against this text."""
     a = tags.get("a", "")
+    if tags.get("k") == "symmetric" or a in SYMMETRIC_ALGOS:
+        if a == "synthid-1":
+            return _synthid_verify(text, loc, _fetch_verify_doc(tags))
+        return {"mark_found": False, "algorithm": a, "record_locator": loc,
+                "record_algorithm": a,
+                "detail": f"{loc} publishes a={a!r} (k=symmetric) -- not a scheme this demo checks"}
     if a in ("tzsataitw-1", "tzsataitw-2"):
         if tz_frame is None:
             return {"mark_found": False, "algorithm": a, "record_locator": loc,
@@ -429,10 +517,13 @@ def _verify_against_record(text, tz_frame, loc, tags):
             "detail": f"{loc} publishes a={a!r} -- not a scheme this demo checks"}
 
 
-def _record_with_p(loc):
+def _watermark_record(loc):
+    """First _watermark-text TXT at loc that names an algorithm and is
+    checkable -- either it publishes a public key (p=) or it is k=symmetric
+    (verified via its d= document). None means "no record here" (crawl stop)."""
     for rec in tz.dig_txt(loc):
         tags = tz.parse_record_tags(rec)
-        if tags.get("p"):
+        if tags.get("a") and (tags.get("p") or tags.get("k") == "symmetric"):
             return tags
     return None
 
@@ -467,7 +558,7 @@ def api_verify(body):
 
         best, tried = None, []
         for loc in locs:
-            tags = _record_with_p(loc)
+            tags = _watermark_record(loc)
             if tags is None:
                 if crawled:
                     break
@@ -483,7 +574,7 @@ def api_verify(body):
 
         if best is None:
             best = {"mark_found": False,
-                    "detail": f"no _watermark-text records with a p= found at {domain}"}
+                    "detail": f"no _watermark-text records found at {domain}"}
         best["tried"] = tried
         best["key_origin"] = "domain-crawl" if crawled else "domain-selector"
         hit = next((t for t in tried if t["locator"] == best.get("record_locator")), None)
@@ -496,6 +587,13 @@ def api_verify(body):
             names = ", ".join(sorted({t['algorithm'] for t in tried}))
             best["key_source"] = (f"{domain}: tried {len(tried)} record(s) [{names}], "
                                   f"none verified")
+            # nothing verified and nothing positively detected -> say so plainly
+            # instead of leaving a per-record "wrong scheme" detail as the
+            # headline (keep a real synthid score / samples-only hint).
+            if (not best.get("verified") and not best.get("mark_found")
+                    and not best.get("hint")):
+                best["detail"] = (f"no watermark detected in this text "
+                                  f"(checked {len(tried)} record(s) at {domain}: {names})")
         return 200, best
 
     # ---- no domain: only an embedded locator can save us
@@ -508,14 +606,17 @@ def api_verify(body):
                               "domain (and optionally a selector) above")
         return 200, info
 
-    if fz is not None and canon_len >= fzp.MIN_WATERMARK_CHARS:
+    # a statistical mark (fairoze-1 ~4360 chars, synthid-1 ~1k) carries no
+    # locator, so past a modest length "no domain" can't be a verdict -- point
+    # the user at the domain field instead.
+    if canon_len >= 1000:
         return 200, {
-            "mark_found": False, "hint": "fairoze-needs-domain",
-            "detail": (f"No tzsataitw watermark here, and this text is long enough to "
-                       f"carry a fairoze-1 mark -- but fairoze marks embed NO locator. "
-                       f"Enter the provider's domain (and selector) above. That is the "
-                       f"point: an independent verifier cannot check a fairoze mark "
-                       f"without being told which provider generated the text."),
+            "mark_found": False, "hint": "needs-domain",
+            "detail": ("No tzsataitw watermark here. This text is long enough to carry a "
+                       "fairoze-1 or synthid-1 mark -- but neither embeds a locator. Enter "
+                       "the provider's domain (and optionally a selector) above. That is the "
+                       "point: an independent verifier cannot check a statistical mark "
+                       "without being told which provider generated the text."),
         }
     return 200, {"mark_found": False,
                  "detail": "no readable watermark found in this text"}

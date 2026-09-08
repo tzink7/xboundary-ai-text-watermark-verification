@@ -316,9 +316,18 @@ $("v-go").addEventListener("click", async () => {
     });
 
     const vd = $("v-verdict");
-    const isFairoze = r.record_algorithm === "fairoze-1" || r.algorithm === "fairoze-1";
-    if (r.hint === "fairoze-needs-domain") {
+    const alg = r.record_algorithm || r.algorithm;
+    const isFairoze = alg === "fairoze-1";
+    const isSynthid = alg === "synthid-1";
+    const scoreNote = (r.score != null && r.threshold != null)
+      ? `  (score ${r.score.toFixed(4)} ${r.verified ? "≥" : "<"} threshold ${r.threshold.toFixed(4)})`
+      : "";
+    if (r.hint === "needs-domain" || r.hint === "fairoze-needs-domain") {
       vd.className = "verdict warn"; vd.textContent = "NEEDS A DOMAIN";
+      kv($("v-meta"), []);
+      $("v-notes").textContent = r.detail || "";
+    } else if (r.hint === "synthid-demo-samples-only") {
+      vd.className = "verdict warn"; vd.textContent = "COULD NOT VERIFY";
       kv($("v-meta"), []);
       $("v-notes").textContent = r.detail || "";
     } else if (!r.mark_found) {
@@ -326,14 +335,17 @@ $("v-go").addEventListener("click", async () => {
       kv($("v-meta"), []);
       $("v-notes").textContent = r.detail || "";
     } else if (r.verified) {
-      vd.className = "verdict ok"; vd.textContent = "VALID — " + r.algorithm;
-      $("v-notes").textContent = "";
-    } else if (isFairoze) {
-      vd.className = "verdict err"; vd.textContent = "NOT VERIFIED — fairoze-1";
-      $("v-notes").textContent = "This text carries a fairoze-1 mark for the key that was "
-        + "tried, but it does not check out. fairoze-1 breaks on almost any edit — a single "
-        + "changed character outside the final segment cascades through every later segment "
-        + "(see the robustness samples). " + (r.detail || "");
+      vd.className = "verdict ok"; vd.textContent = "VALID — " + alg + scoreNote;
+      $("v-notes").textContent = isSynthid
+        ? "This is a symmetric scheme — the provider's own verify endpoint scored the text "
+          + "above its detection threshold. There is no public key; you are trusting "
+          + (r.verify_endpoint || "the provider's endpoint") + "."
+        : "";
+    } else if (isSynthid) {
+      vd.className = "verdict err"; vd.textContent = "NOT DETECTED — synthid-1" + scoreNote;
+      $("v-notes").textContent = "The provider's verify endpoint scored this text below its "
+        + "SynthID detection threshold — no watermark, or it was edited/paraphrased enough to "
+        + "wash the statistical signal out. " + (r.detail || "");
     } else if (r.detail) {
       vd.className = "verdict warn"; vd.textContent = "COULD NOT VERIFY";
       $("v-notes").textContent = r.detail;
@@ -349,11 +361,19 @@ $("v-go").addEventListener("click", async () => {
                      : r.tried_locators ? r.tried_locators.length : undefined;
     const triedList = r.tried ? r.tried.map((t) => `${t.locator} (${t.algorithm})`).join(", ")
                     : undefined;
-    kv($("v-meta"), (r.mark_found && r.hint !== "fairoze-needs-domain") ? [
-      ["algorithm", r.algorithm],
+    const showMeta = r.mark_found && r.hint !== "needs-domain"
+                  && r.hint !== "synthid-demo-samples-only";
+    kv($("v-meta"), showMeta ? [
+      ["algorithm", alg],
       ["channel", r.channel],
-      ["signature", r.detail && !r.verified ? "does not verify"
-                  : r.signature_ok ? "cryptographically valid" : "not checked"],
+      ["check", isSynthid
+        ? (r.verified ? "score above threshold" : "score below threshold")
+        : (r.detail && !r.verified ? "signature does not verify"
+          : r.signature_ok ? "signature cryptographically valid" : "not checked")],
+      ["score", r.score != null ? r.score.toFixed(6) : undefined],
+      ["threshold", r.threshold != null ? r.threshold.toFixed(6) : undefined],
+      ["tokens scored", r.tokens_scored || undefined],
+      ["verify endpoint", r.verify_endpoint || undefined],
       ["verified against", r.key_source || "—"],
       ["key located by", r.key_origin === "embedded-locator" ? "the locator embedded in the watermark"
                        : r.key_origin === "domain-crawl" ? `crawling ${r.provider || "the domain you entered"} from selector 1`
@@ -366,7 +386,7 @@ $("v-go").addEventListener("click", async () => {
       ["fairoze message", isFairoze ? r.message : undefined],
       ["aligned at offset", isFairoze && r.offset != null ? r.offset : undefined],
       ["canonical chars", isFairoze ? r.canonical_chars : undefined],
-      ["embedded locator", isFairoze ? undefined : (r.locator || "(none in the mark)")],
+      ["embedded locator", (isFairoze || isSynthid) ? undefined : (r.locator || "(none in the mark)")],
       ["provider", r.provider || undefined],
       ["selector", r.selector == null ? undefined : r.selector],
       ["record a=", r.record_algorithm || "—"],

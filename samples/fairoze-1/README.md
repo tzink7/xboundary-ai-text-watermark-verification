@@ -70,4 +70,4 @@ Made from `sample-01.txt` by `tools/fairoze_demo_edits.py`:
 | file | edit | verifies | why |
 |---|---|---|---|
 | `sample-01-edited-tail.txt` | one character in the **last** segment | VALID | isolated 1-symbol error, Reed-Solomon corrects it |
-| `sample-01-edited-early.txt` | one character near the **start** | **NOT VERIFIED** | the detector's chained hash cascades — every later segment is corrupted too (D4) |
+| `sample-01-edited-early.txt` | one character near the **start** | **no recoverable codeword** | the detector's chained hash cascades — every later segment is corrupted too, well past RS's 2-symbol budget, so nothing decodes (D4). To an independent verifier this is indistinguishable from "no mark", which is the honest verdict: an early edit destroys the mark. |

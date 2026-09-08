@@ -107,19 +107,22 @@
   <!-- (b) ------------------------------------------------------------------- -->
   <section class="card hidden" id="tab-verify">
     <h2>Verify text</h2>
-    <p class="lede">Detects the channel, recovers the signature, fetches the public key from
-      DNS, and checks it. When the key comes from DNS, the record's <code>a=</code> must also
-      match the mark's algorithm or the mark is rejected.</p>
+    <p class="lede">Works out what kind of mark the text carries and checks it against DNS.
+      For <code>tzsataitw-*</code> that means recovering the signature and the public key
+      (<code>p=</code>); for <code>fairoze-1</code>, recovering the codeword and checking its
+      signature; for <code>synthid-1</code> (<code>k=symmetric</code>), fetching the record's
+      <code>d=</code> document and asking the provider's <code>verify</code> endpoint. The
+      record's <code>a=</code> must match the mark or it is rejected.</p>
     <ul class="lede-list">
       <li><strong>Leave both blank</strong> &mdash; use the locator embedded in the watermark.</li>
       <li><strong>Domain only</strong> &mdash; crawl <code>1._watermark-text.&lt;domain&gt;</code>,
-        <code>2.</code>, &hellip; until one selector verifies the signature (up to 10).</li>
+        <code>2.</code>, &hellip; until one selector checks out (up to 10).</li>
       <li><strong>Domain + selector</strong> &mdash; check only that one record.</li>
     </ul>
-    <p class="lede"><code>fairoze-1</code> marks carry <strong>no embedded locator</strong>, so
-      &ldquo;leave both blank&rdquo; can&rsquo;t work for them &mdash; you have to name the
-      domain. That is the point: an independent verifier cannot check a <code>fairoze-1</code>
-      mark without being told which provider generated the text.</p>
+    <p class="lede"><code>fairoze-1</code> and <code>synthid-1</code> marks carry <strong>no
+      embedded locator</strong>, so &ldquo;leave both blank&rdquo; can&rsquo;t work for them
+      &mdash; you have to name the domain. That is the point: an independent verifier cannot
+      check a statistical mark without being told which provider generated the text.</p>
 
     <label for="v-text">Watermarked text</label>
     <textarea id="v-text" placeholder="Paste watermarked text here."></textarea>
