@@ -2,16 +2,18 @@
 
 `synthid-1` (Google DeepMind's SynthID-Text) is a *symmetric, statistical*
 watermark -- here as the contrast case against `fairoze-1` / `tzsataitw-*`.
-Generation is cheap (a small per-token overhead, no rejection sampling), so this
-could run on a laptop CPU -- **except MPS silently produces unwatermarked text**
-(the SynthID logits processor has tensor-op gaps on Apple GPU), and CPU is slow
-(~2-3 hrs). Colab on a CUDA GPU does the whole batch in ~15 min and lets you use
-a 3B model for readable prose.
+Generation is cheap (a small per-token overhead, no rejection sampling).
 
-The trick: Colab runs the **same `tools/synthid_smoke.py --build`** this repo
-ships -- clone, install, generate + calibrate + package on the GPU, then just
-download the finished `samples/synthid-1/` folder. No parameter duplication, no
-drift.
+**You probably don't need this file.** `tools/synthid_smoke.py --build` runs
+fine on a laptop -- CPU (~2-3 hrs for a full batch) or Apple MPS (~20-40 min).
+`synthid.py` monkeypatches the SynthID sampling table onto the CPU generator
+(`make_device_independent()`), so a mark embedded on *any* device verifies on a
+CPU laptop / Cloud Run. Colab is only worth it if you want a bigger model
+(Qwen2.5-3B rather than 0.5B) for nicer prose, done in ~15 min on a T4.
+
+If you do use Colab: it runs the **same `tools/synthid_smoke.py --build`** this
+repo ships -- clone, install, generate + calibrate + package on the GPU, then
+download the finished `samples/synthid-1/` folder. No parameter duplication.
 
 ---
 

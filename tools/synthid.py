@@ -110,10 +110,44 @@ def load_config(config_path: str, keys_path: str | None = None) -> dict:
 # processor + tokenizer                                                        #
 # --------------------------------------------------------------------------- #
 
+def make_device_independent():
+    """SynthID's sampling table is seeded with `torch.Generator(device=<model
+    device>)` (transformers logits_process.py). CPU / CUDA / MPS each produce a
+    DIFFERENT table for the same seed, so a mark embedded on a Colab GPU reads as
+    noise on a CPU verifier (and the Cloud Run demo). Verified 2026-09-07.
+
+    This monkeypatch rebuilds `sampling_table` with the CPU generator right after
+    the processor is constructed, then moves it to the processor's device -- the
+    table values are now the same everywhere. BOTH the generator (synthid_smoke)
+    and the verifier must call this before touching a SynthID processor.
+    Idempotent.
+    """
+    import torch
+    from transformers.generation import logits_process as _lp
+
+    P = _lp.SynthIDTextWatermarkLogitsProcessor
+    if getattr(P, "_cpu_table_patched", False):
+        return
+    _orig_init = P.__init__
+
+    def _init(self, *args, **kwargs):
+        _orig_init(self, *args, **kwargs)
+        seed = kwargs.get("sampling_table_seed")
+        if seed is None and len(args) >= 4:
+            seed = args[3]                      # positional: (ngram_len, keys, size, seed, ...)
+        size = int(self.sampling_table.shape[0])
+        g = torch.Generator(device="cpu").manual_seed(int(seed or 0))
+        self.sampling_table = torch.randint(0, 2, (size,), generator=g).to(self.device)
+
+    P.__init__ = _init
+    P._cpu_table_patched = True
+
+
 def _build_processor(cfg: dict, vocab_size: int):
     import torch
     from transformers import SynthIDTextWatermarkingConfig
 
+    make_device_independent()
     wm = SynthIDTextWatermarkingConfig(
         ngram_len=cfg["ngram_len"],
         keys=cfg["keys"],

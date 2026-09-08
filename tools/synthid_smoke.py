@@ -105,35 +105,39 @@ def _resolve_keys(path: str | None) -> list[int]:
 
 
 def _pick_device(pref: str):
-    """CUDA if asked and present; otherwise CPU. MPS is DELIBERATELY refused:
-    the SynthID logits processor runs on MPS without error but produces
-    effectively unwatermarked text (verified 2026-09-07) -- generation and
-    detection then disagree and every sample fails. Use Colab/CUDA for speed."""
+    """`auto` -> mps if present, else cuda, else cpu. Any device is fine now that
+    sid.make_device_independent() forces the SynthID sampling table onto the CPU
+    generator -- before that patch, a mark embedded on mps/cuda was unreadable on
+    a cpu verifier (the whole "MPS is broken" scare of 2026-09-07 was this bug)."""
     import torch
-    if pref in ("mps", "auto") and getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
-        if pref == "mps":
-            print("WARNING: --device mps ignored -- SynthID generation is broken on MPS "
-                  "(produces unwatermarked text). Using CPU. For speed, generate on Colab.")
-        return torch.device("cpu")
-    if pref in ("auto", "cpu"):
-        return torch.device("cpu")
-    return torch.device(pref)          # cuda, etc. -- trusted as given
+    if pref != "auto":
+        return torch.device(pref)
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return torch.device("mps")
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    return torch.device("cpu")
 
 
 class _Gen:
     """Wraps a loaded model + the SynthID config + sampling params."""
 
     def __init__(self, model_id: str, keys: list[int], ngram_len: int,
-                 num_tokens: int, device_pref: str):
+                 num_tokens: int, device_pref: str, dtype_pref: str = "float32"):
         import torch
         import transformers
         from transformers import (AutoModelForCausalLM, AutoTokenizer,
                                   SynthIDTextWatermarkingConfig)
 
         transformers.logging.set_verbosity_error()
-        self.torch = torch
+        sid.make_device_independent()          # CPU-seeded sampling table, so a GPU
+        self.torch = torch                     # mark verifies on a CPU laptop / Cloud Run
         self.device = _pick_device(device_pref)
-        dtype = torch.float16 if self.device.type == "cuda" else torch.float32
+        # fp32 default; fp16 also works (tested, ~same separation) but fp32 is the
+        # safe choice for a small demo batch. The sampling table is forced onto
+        # the CPU generator above, so device choice no longer affects the mark.
+        dtype = {"float32": torch.float32, "float16": torch.float16,
+                 "bfloat16": torch.bfloat16}[dtype_pref]
         self.tok = AutoTokenizer.from_pretrained(model_id)
         self.model = AutoModelForCausalLM.from_pretrained(model_id, dtype=dtype)
         self.model.to(self.device).eval()
@@ -184,7 +188,7 @@ def _score_file(path, cfg, tokenizer, processor):
 def cmd_smoke(args) -> int:
     keys = _resolve_keys(args.keys)
     out = args.out or "smoke-synthid"
-    gen = _Gen(args.model, keys, args.ngram_len, args.num_tokens, args.device)
+    gen = _Gen(args.model, keys, args.ngram_len, args.num_tokens, args.device, args.dtype)
     os.makedirs(os.path.join(out, "wm"), exist_ok=True)
     os.makedirs(os.path.join(out, "plain"), exist_ok=True)
 
@@ -260,7 +264,7 @@ def cmd_build(args) -> int:
     if todo:
         print(f"generating {len(todo)} file(s) on {args.model} "
               f"(resumable -- {n_samp + args.controls - len(todo)} already present)")
-        gen = _Gen(args.model, keys, args.ngram_len, args.num_tokens, args.device)
+        gen = _Gen(args.model, keys, args.ngram_len, args.num_tokens, args.device, args.dtype)
         for kind, k, path in todo:
             if kind == "sample":
                 _, topic = CONTENT_PROMPTS[k]
@@ -378,7 +382,9 @@ def main(argv=None) -> int:
     p.add_argument("--build", action="store_true", help="generate samples/synthid-1/ + calibrate")
     p.add_argument("--model", default=DEFAULT_MODEL, help=f"HF model id (default: {DEFAULT_MODEL})")
     p.add_argument("--keys", metavar="FILE", help="JSON {\"keys\": [...]} -- the SECRET")
-    p.add_argument("--device", default="auto", help="auto (mps if present, else cpu) | cpu | mps")
+    p.add_argument("--device", default="auto", help="auto (mps > cuda > cpu) | cpu | cuda | mps")
+    p.add_argument("--dtype", default="float32", choices=["float32", "float16", "bfloat16"],
+                   help="model dtype (default float32; float16 also works)")
     p.add_argument("--num-tokens", type=int, default=700)
     p.add_argument("--ngram-len", type=int, default=5)
     p.add_argument("--force", action="store_true", help="regenerate files that already exist")

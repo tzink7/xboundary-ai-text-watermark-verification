@@ -178,6 +178,25 @@ class TestScoring(unittest.TestCase):
         self.assertGreaterEqual(rep["threshold"], rep["score_p50"])
         self.assertLessEqual(rep["threshold"], rep["score_max"])
 
+    def test_sampling_table_is_device_independent(self):
+        """The whole point of make_device_independent(): the table must not depend
+        on which device the processor was built on. Without the patch, a CUDA/MPS
+        table differs from a CPU one and GPU-generated marks fail CPU detection."""
+        import torch
+        from transformers import SynthIDTextWatermarkingConfig
+        sid.make_device_independent()
+        c = SynthIDTextWatermarkingConfig(keys=list(range(101, 125)), ngram_len=5,
+                                          sampling_table_seed=0, sampling_table_size=2 ** 16)
+        p_cpu = c.construct_processor(50257, torch.device("cpu"))
+        t_ref = torch.randint(0, 2, (2 ** 16,),
+                              generator=torch.Generator(device="cpu").manual_seed(0))
+        self.assertTrue(torch.equal(p_cpu.sampling_table.cpu(), t_ref),
+                        "patched CPU table should equal a plain CPU-seeded randint")
+        if torch.backends.mps.is_available():
+            p_mps = c.construct_processor(50257, torch.device("mps"))
+            self.assertTrue(torch.equal(p_mps.sampling_table.cpu(), t_ref),
+                            "MPS table must match the CPU table after the patch")
+
 
 def _run():
     suite = unittest.TestLoader().loadTestsFromModule(sys.modules[__name__])
