@@ -1,0 +1,19 @@
+# Dependencies for tools/synthid.py ONLY -- kept separate from tools/requirements.txt
+# because these are large (torch is ~hundreds of MB) and nothing else in tools/
+# needs them. synthid.py imports them lazily, so the rest of the toolchain works
+# without this file installed.
+#
+#   python3 -m venv .venv && .venv/bin/pip install -r tools/requirements-synthid.txt
+#
+# Detection needs NO GPU and NO model weights -- only the tokenizer and the
+# SynthID reference logits-processor (which lives in transformers). A CPU-only
+# torch build is fine and much smaller:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+torch >= 2.0
+transformers >= 4.46        # SynthID-Text landed in 4.46.0 (Oct 2024)
+
+# Optional: only if the generation model's tokenizer is SentencePiece-based
+# (Llama / Mistral / T5 family). gpt2 and Qwen2.5 do NOT need it. It can be
+# slow to get a wheel on a brand-new Python -- install it on its own if needed:
+#   pip install sentencepiece

@@ -233,6 +233,11 @@ demo/keys/*
 !demo/keys/.gitkeep
 !demo/keys/README.md
 
+# synthid-1 watermark keys (the SECRET -- symmetric) and scratch generation output
+*synthid*keys*.json
+synthid-1.keys.json
+smoke-synthid/
+
 # macOS / editors
 .DS_Store
 *.swp
