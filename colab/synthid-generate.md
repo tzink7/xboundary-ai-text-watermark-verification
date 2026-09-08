@@ -49,7 +49,7 @@ Confirms the watermark signal survives CUDA generation before you commit to the
 full run.
 
 ```python
-!python tools/synthid_smoke.py --smoke --device cuda --pairs 3 \
+!python tools/synthid_smoke.py --smoke --device cuda --dtype float16 --pairs 3 \
     --model Qwen/Qwen2.5-3B-Instruct \
     --keys /content/synthid-1.keys.json --out /content/smoke
 ```
@@ -61,21 +61,33 @@ the keys or the transformers version.
 ## Cell 4 -- the build (~15 min on a T4)
 
 ```python
-!python tools/synthid_smoke.py --build --device cuda \
+!python tools/synthid_smoke.py --build --device cuda --dtype float16 \
     --model Qwen/Qwen2.5-3B-Instruct \
     --samples 10 --controls 40 --num-tokens 650 --fpr 0.02 \
     --keys /content/synthid-1.keys.json
 ```
 
+`--dtype float16` matters: Qwen2.5-3B at the fp32 default is ~12 GB and OOMs a
+16 GB T4 mid-run (which writes nothing). fp16 is ~6 GB and still watermarks fine
+-- the device-independence patch handles the table, not the dtype. If it still
+OOMs, drop to `Qwen/Qwen2.5-1.5B-Instruct`.
+
 This generates `samples/synthid-1/sample-01..10.txt` (watermarked) and
 `controls/ctrl-000..039.txt` (unwatermarked), calibrates the detection
 threshold on the controls, writes `synthid-1.config.json` + `samples.json`, and
-prints a table -- every `sample-NN` should read `WATERMARKED`. If some do not,
-raise `--num-tokens` and re-run (it is resumable; `--force` to redo all).
+prints a table. **Read the last lines** -- it must say `demo samples cleared:
+10/10`. If not, raise `--num-tokens` and re-run (resumable; `--force` redoes all).
+If the run dies or you see a CUDA OOM, nothing is written -- fix and rerun.
 
 Adjust `--samples` / `--controls` to taste. 3 samples + 22 controls is a
 perfectly good demo and runs in ~5 min; 10 + 40 gives a fuller picker and a
 tighter threshold.
+
+Then confirm the files are actually there before moving on:
+
+```python
+!ls samples/synthid-1/ && ls samples/synthid-1/controls/ | wc -l
+```
 
 ## Cell 5 -- download
 
