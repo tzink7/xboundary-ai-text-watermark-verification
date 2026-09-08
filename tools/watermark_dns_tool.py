@@ -2569,58 +2569,87 @@ def _run_wizard(args):
 
     # --- descriptor / verification-document build ---------------
     d_url = dh_value = descriptor_path = None
+
+    def _ask_d_pointer(noun, default_url):
+        """The record needs d= (URL) and dh= (hash) even when the document is
+        built and hosted elsewhere. Prompt for them directly."""
+        url = _ask_nonempty(f"d= HTTPS URL that will serve the {noun}", default_url)
+        dh_in = _ask("dh= value (leave blank to compute it from a local file now)", "").strip()
+        if dh_in:
+            return url, dh_in
+        path = _ask_nonempty(f"  path to the {noun} file (its bytes must match what you host)")
+        with open(path, "rb") as fh:
+            body = fh.read()
+        algo = _ask_choice("  dh= hash algorithm", ["sha-256", "sha-384", "sha-512"], "sha-256")
+        dh = compute_dh(body, algo, pad=False)
+        print(f"  dh={dh}")
+        return url, dh
+
     if symmetric:
         print()
-        print("d= verification document (draft Section 6.6):")
-        verify_url = _ask_nonempty("verify (the HTTPS endpoint a third party POSTs text to)")
-        canon_default = "strip-zero-width,nfc,trim"
-        canon = [t.strip() for t in _ask("canonicalization tokens (comma-separated)",
-                                         canon_default).split(",") if t.strip()]
-        vextra = []
-        while _ask_yesno("Add a scheme parameter (e.g. tokenizer, threshold)?", "n"):
-            k = _ask_nonempty("  field name")
-            v = _ask_nonempty("  field value")
-            try:
-                v = int(v)
-            except ValueError:
+        print("A k=symmetric record REQUIRES a d= verification document (draft Section 6.6):")
+        print("  a small JSON file, served over HTTPS, naming the verify endpoint and the")
+        print("  canonicalization steps a third-party verifier applies before it POSTs.")
+        default_url = f"https://{domain}/watermark/verify.json"
+        if _ask_yesno("Build that document now?", "y"):
+            verify_url = _ask_nonempty("verify (the HTTPS endpoint a third party POSTs text to)")
+            canon_default = "strip-zero-width,nfc,trim"
+            canon = [t.strip() for t in _ask("canonicalization tokens (comma-separated)",
+                                             canon_default).split(",") if t.strip()]
+            vextra = []
+            while _ask_yesno("Add a scheme parameter (e.g. tokenizer, threshold)?", "n"):
+                k = _ask_nonempty("  field name")
+                v = _ask_nonempty("  field value")
                 try:
-                    v = float(v)
+                    v = int(v)
                 except ValueError:
-                    pass
-            vextra.append((k, v))
-        compact = _ask_yesno("Minified JSON? (default: indented)", "n")
-        descriptor_path = _ask("Verification-document output path", "verify.json")
-        _, body = build_verify_doc(algorithm, verify_url, canon, vextra, compact)
-        with open(descriptor_path, "wb") as fh:
-            fh.write(body)
-        dh_algo = _ask_choice("dh= hash algorithm", ["sha-256", "sha-384", "sha-512"], "sha-256")
-        dh_value = compute_dh(body, dh_algo, pad=False)
-        print(f"  wrote {descriptor_path} ({len(body)} bytes); dh={dh_value}")
-        default_url = f"https://{domain}/watermark/{os.path.basename(descriptor_path)}"
-        d_url = _ask_nonempty("d= HTTPS URL that will serve those exact bytes", default_url)
+                    try:
+                        v = float(v)
+                    except ValueError:
+                        pass
+                vextra.append((k, v))
+            compact = _ask_yesno("Minified JSON? (default: indented)", "n")
+            descriptor_path = _ask("Verification-document output path", "verify.json")
+            _, body = build_verify_doc(algorithm, verify_url, canon, vextra, compact)
+            with open(descriptor_path, "wb") as fh:
+                fh.write(body)
+            dh_algo = _ask_choice("dh= hash algorithm", ["sha-256", "sha-384", "sha-512"], "sha-256")
+            dh_value = compute_dh(body, dh_algo, pad=False)
+            print(f"  wrote {descriptor_path} ({len(body)} bytes); dh={dh_value}")
+            default_url = f"https://{domain}/watermark/{os.path.basename(descriptor_path)}"
+            d_url = _ask_nonempty("d= HTTPS URL that will serve those exact bytes", default_url)
+        else:
+            print("  OK -- you'll build and host it yourself. The record still needs its URL and hash.")
+            d_url, dh_value = _ask_d_pointer("verification document", default_url)
     elif want_d:
         print()
-        print("d= custody descriptor (draft Section 7.2):")
-        rf_default = "otherprovider.ai" if handoff_kind == "cross-vendor" else "self"
-        received_from = _ask_nonempty(
-            "received_from (upstream provider domain, or free text)", rf_default)
-        provider = _ask("provider (this signing provider's domain)", domain)
-        ts = parse_ts(_ask("ts (descriptor publish time: unix / 'now' / ISO date)", "now"))
-        extra = []
-        while _ask_yesno("Add an extra field to the descriptor?", "n"):
-            k = _ask_nonempty("  field name")
-            v = _ask_nonempty("  field value")
-            extra.append((k, v))
-        compact = _ask_yesno("Minified JSON? (default: indented)", "n")
-        descriptor_path = _ask("Descriptor output path", "desc.json")
-        _, body = build_descriptor(received_from, selector, provider, c, ts, extra, compact)
-        with open(descriptor_path, "wb") as fh:
-            fh.write(body)
-        dh_algo = _ask_choice("dh= hash algorithm", ["sha-256", "sha-384", "sha-512"], "sha-256")
-        dh_value = compute_dh(body, dh_algo, pad=False)
-        print(f"  wrote {descriptor_path} ({len(body)} bytes); dh={dh_value}")
-        default_url = f"https://{selector}.{WELL_KNOWN_LABEL}.{domain}/{os.path.basename(descriptor_path)}"
-        d_url = _ask_nonempty("d= HTTPS URL that will serve those exact bytes", default_url)
+        print("This selector needs a d= custody descriptor (draft Section 7.2): JSON, served")
+        print("over HTTPS, recording who this text was received from before you re-signed it.")
+        default_url = f"https://{selector}.{WELL_KNOWN_LABEL}.{domain}/desc.json"
+        if _ask_yesno("Build that descriptor now?", "y"):
+            rf_default = "otherprovider.ai" if handoff_kind == "cross-vendor" else "self"
+            received_from = _ask_nonempty(
+                "received_from (upstream provider domain, or free text)", rf_default)
+            provider = _ask("provider (this signing provider's domain)", domain)
+            ts = parse_ts(_ask("ts (descriptor publish time: unix / 'now' / ISO date)", "now"))
+            extra = []
+            while _ask_yesno("Add an extra field to the descriptor?", "n"):
+                k = _ask_nonempty("  field name")
+                v = _ask_nonempty("  field value")
+                extra.append((k, v))
+            compact = _ask_yesno("Minified JSON? (default: indented)", "n")
+            descriptor_path = _ask("Descriptor output path", "desc.json")
+            _, body = build_descriptor(received_from, selector, provider, c, ts, extra, compact)
+            with open(descriptor_path, "wb") as fh:
+                fh.write(body)
+            dh_algo = _ask_choice("dh= hash algorithm", ["sha-256", "sha-384", "sha-512"], "sha-256")
+            dh_value = compute_dh(body, dh_algo, pad=False)
+            print(f"  wrote {descriptor_path} ({len(body)} bytes); dh={dh_value}")
+            default_url = f"https://{selector}.{WELL_KNOWN_LABEL}.{domain}/{os.path.basename(descriptor_path)}"
+            d_url = _ask_nonempty("d= HTTPS URL that will serve those exact bytes", default_url)
+        else:
+            print("  OK -- you'll build and host it yourself. The record still needs its URL and hash.")
+            d_url, dh_value = _ask_d_pointer("custody descriptor", default_url)
 
     # --- r= (selector 1 only) -------------------------------------
     r_value = None
