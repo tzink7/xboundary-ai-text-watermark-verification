@@ -1305,8 +1305,20 @@ def lint_record(record_text, selector=None, domain=None, is_make=False,
                 f.error("D-JSON", f"d= document must be a JSON object, got {type(parsed).__name__}")
                 parsed = None
 
-            # check the contents against the Section 7.2 schema + cases i/g
-            if isinstance(parsed, dict):
+            # which d= document is this? k=symmetric -> Section 6.6 verification
+            # document; everything else -> Section 7.2 custody descriptor.
+            doc_kind = "verify-doc" if is_symmetric else "descriptor"
+
+            if isinstance(parsed, dict) and doc_kind == "verify-doc":
+                validate_verify_doc_obj(OrderedDict(parsed), f,
+                                        record_algorithm=tags.get("a"))
+                extras = [k for k in parsed if k not in VERIFY_DOC_REQUIRED_FIELDS]
+                if extras:
+                    f.info("VD-EXTRA",
+                           f"verification document carries scheme-specific field(s): "
+                           f"{', '.join(extras)} (OPTIONAL / informational, Section 6.6)")
+            elif isinstance(parsed, dict):
+                # check the contents against the Section 7.2 schema + cases i/g
                 validate_descriptor_obj(
                     OrderedDict(parsed), f,
                     expected_selector=str(selector) if selector is not None else None,
@@ -1325,18 +1337,28 @@ def lint_record(record_text, selector=None, domain=None, is_make=False,
                            f"{parsed.get('received_from')!r}; c=sign means fresh generation "
                            f"with no upstream source")
 
+            is_dict = isinstance(parsed, dict)
+            if not is_dict:
+                fields = reads_as = None
+            elif doc_kind == "verify-doc":
+                fields = _verify_doc_field_rows(parsed, tags)
+                reads_as = describe_verify_doc(parsed)
+            else:
+                fields = _descriptor_field_rows(parsed, tags, selector, domain)
+                reads_as = describe_custody(parsed, selector)
+
             # attach the fetched document so callers can print its contents
             f.descriptor = {
                 "origin": origin,
                 "url": tags["d"],
                 "bytes": len(body),
-                "is_json": isinstance(parsed, dict),
-                "json": parsed if isinstance(parsed, dict) else None,
+                "kind": doc_kind,
+                "is_json": is_dict,
+                "json": parsed if is_dict else None,
                 "raw": body.decode("utf-8", "replace"),
                 "digest_ok": digest_ok,
-                "fields": (_descriptor_field_rows(parsed, tags, selector, domain)
-                           if isinstance(parsed, dict) else None),
-                "reads_as": describe_custody(parsed, selector) if isinstance(parsed, dict) else None,
+                "fields": fields,
+                "reads_as": reads_as,
             }
 
     f.record_summary = describe_record(tags, selector, domain, key_label, validity_word,
@@ -1445,9 +1467,14 @@ def format_descriptor_block(desc, indent=""):
     a header line, the field-by-field table, then the plain-English reading."""
     if not desc:
         return ""
-    lines = [f"{indent}d= document -- {desc['url']}  ({desc['bytes']} bytes)"]
+    kind_label = {"verify-doc": "verification document, Section 6.6",
+                  "descriptor": "custody descriptor, Section 7.2"}.get(desc.get("kind"), "")
+    header = f"{indent}d= document -- {desc['url']}  ({desc['bytes']} bytes)"
+    if kind_label:
+        header += f"  [{kind_label}]"
+    lines = [header]
     if not desc["is_json"]:
-        lines.append(f"{indent}  not a JSON object -- the normative d= form is JSON (Section 7.2)")
+        lines.append(f"{indent}  not a JSON object -- the normative d= form is JSON")
         for pl in desc["raw"][:600].splitlines():
             lines.append(f"{indent}  | {pl}")
         return "\n".join(lines)
@@ -1682,6 +1709,8 @@ _ROW_FOR_CODE = {
     "D-MISSING": "d= doc", "D-C-VALUE": "d= doc", "D-SELECTOR": "d= doc",
     "D-PROVIDER": "d= doc", "D-TS": "d= doc", "D-EXTRA": "d= doc",
     "D-SIGN-SOURCE": "d= doc",
+    "VD-MISSING": "d= doc", "VD-ALGORITHM": "d= doc", "VD-VERIFY-SCHEME": "d= doc",
+    "VD-CANON-TYPE": "d= doc", "VD-CANON-TOKEN": "d= doc", "VD-EXTRA": "d= doc",
 }
 _TABLE_ROW_ORDER = ["syntax", "v", "a", "p", "k", "c", "d", "dh", "s", "nb", "na",
                     "validity", "r", "custody", "d= doc", "other"]
@@ -1693,6 +1722,8 @@ _LEVEL_RANK = {"OK": 0, "INFO": 1, "WARN": 2, "ERROR": 3}
 _DESCRIPTOR_COVERED = {
     "D-MISSING", "D-C-VALUE", "D-SELECTOR", "D-PROVIDER", "D-TS", "D-EXTRA",
     "D-SIGN-SOURCE", "D-C-MISMATCH", "D-JSON",
+    "VD-MISSING", "VD-ALGORITHM", "VD-VERIFY-SCHEME", "VD-CANON-TYPE",
+    "VD-CANON-TOKEN", "VD-EXTRA",
 }
 
 
@@ -1792,6 +1823,62 @@ def _descriptor_field_rows(parsed, record_tags, selector, domain):
         if k not in DESCRIPTOR_REQUIRED_FIELDS:
             rows.append((k, "info", f'"{v}" -- non-schema field (allowed, Section 7.2)'))
     return rows
+
+
+def _verify_doc_field_rows(parsed, record_tags):
+    """Rows for a Section 6.6 verification document: the three required common
+    fields, then any scheme-specific extras (OPTIONAL / informational)."""
+    rows = []
+    rec_a = record_tags.get("a")
+
+    val = parsed.get("algorithm")
+    if not val:
+        rows.append(("algorithm", "ERROR", "missing -- required by Section 6.6"))
+    elif rec_a and str(val) != str(rec_a):
+        rows.append(("algorithm", "ERROR",
+                     f'"{val}" but the record says a={rec_a!r} -- a verifier MUST reject this'))
+    else:
+        rows.append(("algorithm", "ok", f'"{val}" (matches the record\'s a=)'))
+
+    val = parsed.get("verify")
+    if not val:
+        rows.append(("verify", "ERROR", "missing -- required by Section 6.6"))
+    elif not str(val).lower().startswith("https://"):
+        rows.append(("verify", "ERROR", f'"{val}" -- HTTPS is REQUIRED'))
+    else:
+        rows.append(("verify", "ok", f'"{val}"'))
+
+    canon = parsed.get("canonicalization")
+    if canon is None:
+        rows.append(("canonicalization", "ERROR", "missing -- required by Section 6.6"))
+    elif not isinstance(canon, list):
+        rows.append(("canonicalization", "ERROR", "MUST be an ordered JSON array"))
+    else:
+        unknown = [t for t in canon if t not in VERIFY_DOC_CANON_TOKENS]
+        if unknown:
+            rows.append(("canonicalization", "WARN",
+                         f'{canon} -- unknown token(s) {unknown}; a verifier that does not '
+                         f'know them MUST treat the document as unusable'))
+        else:
+            rows.append(("canonicalization", "ok", f'{canon}'))
+
+    for k, v in parsed.items():
+        if k not in VERIFY_DOC_REQUIRED_FIELDS:
+            rows.append((k, "info", f'{v!r} -- scheme parameter (OPTIONAL, Section 6.6)'))
+    return rows
+
+
+def describe_verify_doc(obj):
+    """A plain-English reading of a Section 6.6 verification document."""
+    if not isinstance(obj, dict):
+        return None
+    algo = obj.get("algorithm") or "an unnamed algorithm"
+    verify = obj.get("verify") or "(no endpoint given)"
+    canon = obj.get("canonicalization")
+    canon_note = (f"; canonicalize with {' -> '.join(canon)} first"
+                  if isinstance(canon, list) and canon else "")
+    return (f"symmetric scheme {algo}: a verifier POSTs the (canonicalized) text to "
+            f"{verify} and trusts that endpoint's watermarked/score verdict{canon_note}")
 
 
 def _wrap_cell(text, width):
