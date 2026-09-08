@@ -256,6 +256,17 @@ def list_demo_keys():
         if s and s["samples"]:
             out.append({"id": f"{algo}-samples", "kind": "samples",
                         "locator": s["locator"], "algorithm": algo, "usable": True})
+
+    # double signature: a synthid-1 sample re-signed with a tzsataitw-1 manifest.
+    # Needs a tzsataitw-1 signing key AND the synthid-1 sample set.
+    tz1 = next((k for k in out if k.get("kind") == "signing"
+                and k.get("algorithm") == "tzsataitw-1"), None)
+    syn = _sample_set("synthid-1")
+    if tz1 and syn and syn["samples"]:
+        out.append({"id": "double-signature", "kind": "double",
+                    "algorithm": "tzsataitw-1+synthid-1", "locator": tz1["locator"],
+                    "outer_key_id": tz1["id"], "outer_locator": tz1["locator"],
+                    "inner_locator": syn["locator"], "usable": True})
     return out
 
 
@@ -311,7 +322,52 @@ def _need_text(body):
 # (a) watermark                                                                #
 # --------------------------------------------------------------------------- #
 
+def _api_double_sign(body):
+    """The Watermark tab's 5th option: take a pre-generated synthid-1 sample and
+    sign it AGAIN with a tzsataitw-1 manifest (draft F2 "double signature")."""
+    entry = next((k for k in list_demo_keys() if k["id"] == "double-signature"), None)
+    if entry is None:
+        return 400, {"error": "double-signature is not available on this server "
+                              "(needs a tzsataitw-1 demo key and the synthid-1 samples)"}
+    s = _sample_set("synthid-1")
+    sample = next((x for x in s["samples"] if x["id"] == body.get("sample")), None)
+    if sample is None:
+        return 400, {"error": "pick a synthid-1 sample"}
+
+    key_path = os.path.join(KEYS_DIR, entry["outer_key_id"])
+    if not os.path.isfile(key_path):
+        return 404, {"error": "the tzsataitw-1 signing key is missing on this server"}
+
+    text = sample["text"]
+    marks = [("synthid-1", entry["inner_locator"])]
+    canon = tz.canonical_text(text)
+    prefix = tz.pack_manifest_prefix(marks, entry["outer_locator"])
+    sig = tz.ed25519_sign(key_path, tz.manifest_signing_bytes(prefix, canon))
+    payload = prefix + sig
+    frame_bits = tz._bytes_to_bits(tz.build_frame(tz.ZWM_MAGIC, payload))
+    watermarked = tz.ZeroWidthChannel().embed(tz.strip_marks(text), frame_bits)
+
+    return 200, {
+        "watermarked": watermarked,
+        "kind": "double-signature",
+        "algorithm": "tzsataitw-1 + synthid-1",
+        "sample_title": sample["title"],
+        "outer": {"algorithm": "tzsataitw-1", "sig_locator": entry["outer_locator"],
+                  "channel": tz.ZeroWidthChannel().summary},
+        "inner": {"algorithm": "synthid-1", "locator": entry["inner_locator"]},
+        "manifest_bytes": len(payload),
+        "frame_bytes": len(frame_bits) // 8,
+        "signature_b64": base64.b64encode(sig).decode("ascii"),
+        "canonical_chars": len(canon),
+        "canonical_sha256": hashlib.sha256(canon.encode("utf-8")).hexdigest(),
+        "signed_over": 'b"tzsataitw/manifest/v1\\n" + manifest + canonical_text',
+    }
+
+
 def api_watermark(body):
+    if body.get("key_id") == "double-signature":
+        return _api_double_sign(body)
+
     text = _need_text(body)
     key_id = body.get("key_id", "")
     if not KEY_ID_RE.match(key_id or ""):

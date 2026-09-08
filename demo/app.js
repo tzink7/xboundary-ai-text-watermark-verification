@@ -137,6 +137,12 @@ async function loadSamples(algo) {
 }
 
 function showSample() {
+  // in double-signature mode the sample is signed server-side on button click,
+  // not shown as-is
+  if ($("wm-key").selectedOptions[0]?.dataset.kind === "double") {
+    $("wm-out").classList.add("hidden");
+    return;
+  }
   const set = SAMPLE_SETS[CUR_SAMPLE_ALGO];
   if (!set) return;
   const s = (set.samples || []).find((x) => x.id === $("wm-sample").value);
@@ -165,12 +171,27 @@ function syncKeyAlgo() {
   const note = $("wm-algo-note");
 
   const sampleMode = kind === "samples";
-  $("wm-sample-row").classList.toggle("hidden", !sampleMode);
-  $("wm-nolocator-row").classList.toggle("hidden", sampleMode);
-  $("wm-go").classList.toggle("hidden", sampleMode);
+  const doubleMode = kind === "double";
+  const pickMode = sampleMode || doubleMode;      // the sample dropdown is shown
+  $("wm-sample-row").classList.toggle("hidden", !pickMode);
+  $("wm-nolocator-row").classList.toggle("hidden", pickMode);
+  $("wm-go").classList.toggle("hidden", sampleMode);   // button hidden for pure samples only
   $("wm-viz-label").classList.toggle("hidden", sampleMode);
-  $("wm-text").disabled = sampleMode;
-  $("wm-text").classList.toggle("grayed", sampleMode);
+  $("wm-text").disabled = pickMode;
+  $("wm-text").classList.toggle("grayed", pickMode);
+  $("wm-go").textContent = doubleMode ? "Sign again (add tzsataitw manifest)" : "Watermark";
+
+  if (doubleMode) {
+    $("wm-out").classList.add("hidden");
+    $("wm-go").disabled = false;
+    note.textContent = "Takes a pre-generated synthid-1 sample and signs it AGAIN with the "
+      + "tzsataitw-1 demo key — a zero-width manifest that points at the synthid-1 record. "
+      + "Pick a sample, then click below. Verify it with the domain left blank.";
+    loadSamples("synthid-1").then((d) => {
+      if (!d.samples.length) note.textContent = "no synthid-1 samples on this server.";
+    });
+    return;
+  }
 
   if (sampleMode) {
     note.textContent = `${algo} spreads the mark across the whole text statistically — `
@@ -226,6 +247,8 @@ function syncKeyAlgo() {
       o.dataset.algo = k.algorithm || "";
       o.textContent = k.kind === "samples"
         ? `${k.locator}  ·  ${k.algorithm} (pre-generated samples)`
+        : k.kind === "double"
+        ? "double signature  ·  synthid-1 sample → tzsataitw-1 manifest"
         : k.locator + (k.algorithm ? "  ·  " + k.algorithm : "");
       sel.appendChild(o);
     }
@@ -266,10 +289,34 @@ function showWmViz(reveal) {
 
 $("wm-go").addEventListener("click", async () => {
   const btn = $("wm-go"); clearErr($("wm-err")); $("wm-out").classList.add("hidden");
-  if (!$("wm-text").value.trim()) { showErr($("wm-err"), "paste some text to watermark first"); return; }
+  const opt = $("wm-key").selectedOptions[0];
+  const doubleMode = opt && opt.dataset.kind === "double";
   if (!$("wm-key").value) { showErr($("wm-err"), "no demo key selected — is there a *.private.pem in the server's keys/ folder?"); return; }
+  if (doubleMode && !$("wm-sample").value) { showErr($("wm-err"), "pick a synthid-1 sample to sign"); return; }
+  if (!doubleMode && !$("wm-text").value.trim()) { showErr($("wm-err"), "paste some text to watermark first"); return; }
   btn.disabled = true; btn.textContent = "signing…";
   try {
+    if (doubleMode) {
+      const r = await post("/api/watermark",
+        { key_id: "double-signature", sample: $("wm-sample").value });
+      $("wm-result").dataset.raw = r.watermarked;
+      $("wm-result").value = r.watermarked;
+      $("wm-viz").checked = false;
+      showWmViz(false);
+      kv($("wm-meta"), [
+        ["result", "double signature — " + r.algorithm],
+        ["sample", r.sample_title],
+        ["outer", `${r.outer.algorithm}, signed by ${r.outer.sig_locator}`],
+        ["inner", `${r.inner.algorithm} @ ${r.inner.locator}`],
+        ["manifest", `${r.manifest_bytes} bytes, ${r.frame_bytes} zero-width chars`],
+        ["signed over", r.signed_over],
+        ["canonical sha256", r.canonical_sha256],
+        ["next step", "Verify tab — leave the domain blank (the manifest is self-describing)"],
+      ]);
+      $("wm-out").classList.remove("hidden");
+      $("wm-out").scrollIntoView({ behavior: "smooth", block: "nearest" });
+      return;
+    }
     const r = await post("/api/watermark", {
       text: $("wm-text").value,
       key_id: $("wm-key").value,
@@ -293,7 +340,8 @@ $("wm-go").addEventListener("click", async () => {
   } catch (e) {
     showErr($("wm-err"), e.message);
   } finally {
-    btn.disabled = false; btn.textContent = "Watermark";
+    btn.disabled = false;
+    btn.textContent = doubleMode ? "Sign again (add tzsataitw manifest)" : "Watermark";
   }
 });
 $("wm-viz").addEventListener("change", (e) => showWmViz(e.target.checked));
