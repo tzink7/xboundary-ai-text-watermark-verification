@@ -165,6 +165,32 @@ invisible characters.
   adjustment" question is left where it was, at the existing §14 bullet, which
   §6.4 now cross-references rather than duplicating.
 
+### B8. A record for a symmetric scheme has no `p=` -- §6.1 assumed every scheme is asymmetric
+- §6.1: `p=` is REQUIRED. But `synthid-1` (SynthID-Text, added 2026-09-07) is
+  **symmetric**: the detection key is secret, there is no public key to publish,
+  and only the key holder can verify. `p=` REQUIRED left no well-formed way to
+  publish such a record.
+- **Implementation:** `synthid_profile.py` and the `synthid-1` sample records
+  carry no `p=`; verification is out-of-band via a `verify` URL in the `d=`
+  document. The `d=` doc leads with the fields a keyless verifier actually needs
+  (`algorithm`, `verify`, `canonicalization`), then the full SynthID parameter
+  set for a key holder / auditor.
+- **RESOLVED (2026-09-08):** §6.1 gains an OPTIONAL `k=` tag (key model for
+  `p=`, same slot as DKIM's `k=`). `k=symmetric` asserts "no public key":
+  `p=` MUST be absent and `d=` MUST be present. `k=` absent ⇒ asymmetric,
+  `p=` REQUIRED as before. Malformed: `p=` and `k=` both absent (indistinguish-
+  able from a publishing error), or `k=symmetric` with a `p=`. NOT `p=;` --
+  empty `p=` means "revoked" in DKIM, the exact collision Appendix A exists to
+  avoid. **Existing asymmetric records need no change** (`k=` optional for them).
+  `nb=`'s tag definition also fixed here -- it still said "valid when the text
+  was generated", a leftover the B2 pass missed.
+- **Still open:** the `d=` tag is specced for `c=re-sign` custody descriptors
+  (§7.2); using it to also carry a symmetric scheme's `verify` endpoint + params
+  overloads it. Either broaden `d=` to "supplementary JSON for this record" or
+  add a distinct tag. And the layered zero-width + `synthid-1` composition (a
+  signed `tzsataitw` manifest pointing at the inner symmetric record) is F2
+  territory, being designed -- not in the draft yet.
+
 ---
 
 ## C. Implementation choices below the spec's abstraction (no conflict, but worth noting)

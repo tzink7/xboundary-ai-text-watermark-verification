@@ -126,12 +126,34 @@ CONFIG_EXAMPLE = {
     #                           # pass --keys FILE or set SYNTHID_KEYS_JSON
 }
 
-# No p= -- symmetric. A verifier is pointed at the provider's own check.
+# No p= -- symmetric, so k=symmetric (draft Section 6.1, added 2026-09-08). The
+# d= document is REQUIRED here and carries the `verify` endpoint; a keyless
+# verifier reads d= to learn where to send the text.
 DNS_RECORD_EXAMPLE = (
     "4._watermark-text.demo.terryzink.com  IN TXT  "
-    '"v=1; a=synthid-1; c=sign; d=https://demo.terryzink.com/verify; '
-    'nb=<unix>; na=ongoing"'
+    '"v=1; a=synthid-1; k=symmetric; c=sign; '
+    'd=https://demo.terryzink.com/watermark/synthid-1.json; dh=sha256-<b64url>; '
+    's=active; nb=<unix>; na=ongoing"'
 )
+
+# The d= document. Required fields first (what a keyless verifier needs to route
+# and to strip the outer zero-width layer); the rest is the parameter set a key
+# holder or auditor needs to reproduce detection.
+D_DOCUMENT_EXAMPLE = {
+    "algorithm": ALGORITHM_ID,
+    "verify": "https://demo.terryzink.com/watermark/verify",
+    "canonicalization": "strip U+200B/U+200C/U+200D/U+2060, then NFC, then trim",
+    "key_model": "symmetric",
+    "detector": DETECTOR,
+    "tokenizer": "Qwen/Qwen2.5-3B-Instruct",
+    "vocab_size": 151665,
+    "ngram_len": NGRAM_LEN,
+    "context_history_size": CONTEXT_HISTORY_SIZE,
+    "sampling_table_seed": SAMPLING_TABLE_SEED,
+    "sampling_table_size": SAMPLING_TABLE_SIZE,
+    "threshold": 0.5123,
+    "fpr_target": DEFAULT_FPR,
+}
 
 
 def summary() -> str:
