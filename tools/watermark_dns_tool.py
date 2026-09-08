@@ -732,7 +732,7 @@ def cmd_make_verify_doc(args):
         ("--verify", args.verify),
     ) if val is None]
     if missing:
-        sys.exit(f"error: --make-verify-doc requires {', '.join(missing)}")
+        sys.exit(f"error: a verification document requires {', '.join(missing)}")
 
     canon = [t.strip() for t in (args.canon or "strip-zero-width,nfc,trim").split(",") if t.strip()]
 
@@ -792,13 +792,24 @@ def cmd_make_verify_doc(args):
 
 
 def cmd_make_descriptor(args):
+    # A k=symmetric record's d= document is the Section 6.6 verification
+    # document, not a Section 7.2 custody descriptor. --make-descriptor builds
+    # it too: pass --verify (or a symmetric --algorithm) and it dispatches.
+    wants_verify_doc = bool(args.verify) or (args.algorithm in SYMMETRIC_ALGORITHMS)
+    if wants_verify_doc:
+        if args.received_from or args.provider:
+            sys.exit("error: --received-from / --provider are for a custody descriptor; "
+                     "a verification document takes --verify (and optional --canon / --extra)")
+        return cmd_make_verify_doc(args)
+
     missing = [name for name, val in (
         ("--received-from", args.received_from),
         ("--selector", args.selector),
         ("--provider", args.provider),
     ) if val is None]
     if missing:
-        sys.exit(f"error: --make-descriptor requires {', '.join(missing)}")
+        sys.exit(f"error: --make-descriptor requires {', '.join(missing)} "
+                 f"(or --verify, to build a k=symmetric verification document instead)")
 
     extra = []
     for pair in args.extra or []:
@@ -2780,9 +2791,12 @@ def build_parser():
     m.add_argument("--make-record", action="store_true",
                    help="(b) build the _watermark-text DNS TXT record")
     m.add_argument("--make-descriptor", action="store_true",
-                   help="(c) build the d= JSON custody descriptor")
+                   help="(c) build the d= JSON document: a Section 7.2 custody "
+                        "descriptor, or -- with --verify -- a Section 6.6 verification "
+                        "document for a k=symmetric record")
     m.add_argument("--make-verify-doc", action="store_true",
-                   help="(c') build the d= JSON verification document (k=symmetric, Section 6.6)")
+                   help="(c') alias for --make-descriptor --verify: the Section 6.6 "
+                        "k=symmetric verification document")
     m.add_argument("--dh", action="store_true",
                    help="(d) compute the dh= digest of a file or URL")
     m.add_argument("--lint", action="store_true",
