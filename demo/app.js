@@ -186,7 +186,11 @@ function syncKeyAlgo() {
   const sel = $("wm-key");
   try {
     const res = await fetch("/api/keys");
-    const { keys, homoglyphs } = await res.json();
+    const { keys, homoglyphs, symmetric_algorithms } = await res.json();
+    if (Array.isArray(symmetric_algorithms) && symmetric_algorithms.length) {
+      R_SYMMETRIC_ALGOS = symmetric_algorithms;
+    }
+    syncRecordAlgo();
     if (homoglyphs) {
       const cls = homoglyphs.replace(/[\]\\^-]/g, "\\$&");
       HOMOGLYPH_RE = new RegExp("[" + cls + "]", "gu");
@@ -366,36 +370,72 @@ $("v-go").addEventListener("click", async () => {
 });
 
 /* ---- (c) build a record -------------------------------------------------- */
-function download(name, text) {
+function download(name, text, type) {
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([text], { type: "application/x-pem-file" }));
+  a.href = URL.createObjectURL(new Blob([text], { type: type || "application/x-pem-file" }));
   a.download = name;
   document.body.appendChild(a); a.click(); a.remove();
 }
 
+let R_SYMMETRIC_ALGOS = ["synthid-1"];   // refined from /api/keys
+
+function syncRecordAlgo() {
+  const sym = R_SYMMETRIC_ALGOS.includes($("r-algo").value);
+  $("r-sym-fields").classList.toggle("hidden", !sym);
+  $("r-keytype-wrap").classList.toggle("hidden", sym);
+  $("r-go").textContent = sym ? "Generate record + verification document"
+                              : "Generate record + key";
+}
+$("r-algo").addEventListener("change", syncRecordAlgo);
+syncRecordAlgo();
+
 $("r-go").addEventListener("click", async () => {
   const btn = $("r-go"); clearErr($("r-err")); $("r-out").classList.add("hidden");
   if (!$("r-domain").value.trim()) { showErr($("r-err"), "enter a domain"); return; }
+  const algo = $("r-algo").value;
+  const sym = R_SYMMETRIC_ALGOS.includes(algo);
+  if (sym && !$("r-verify").value.trim()) {
+    showErr($("r-err"), "a k=symmetric record needs a verify endpoint URL"); return;
+  }
   btn.disabled = true; btn.textContent = "generating…";
   try {
-    const r = await post("/api/make-record", {
+    const payload = {
       domain: $("r-domain").value.trim(),
       selector: $("r-selector").value,
-      algorithm: $("r-algo").value,
-      key_type: $("r-keytype").value,
+      algorithm: algo,
       c: $("r-c").value,
-    });
+    };
+    if (sym) {
+      payload.verify = $("r-verify").value.trim();
+      payload.d = $("r-durl").value.trim() || null;
+      payload.canonicalization = $("r-canon").value.trim();
+      payload.extra = $("r-extra").value;
+    } else {
+      payload.key_type = $("r-keytype").value;
+    }
+    const r = await post("/api/make-record", payload);
+
     $("r-record").textContent = r.record;
     $("r-zone").textContent = r.zonefile;
-    $("r-dl-priv").onclick = () => download(r.record_name + ".private.pem", r.private_pem);
-    $("r-dl-pub").onclick = () => download(r.record_name + ".public.pem", r.public_pem);
+
+    $("r-dl-keys").classList.toggle("hidden", !!r.symmetric);
+    $("r-verifydoc-wrap").classList.toggle("hidden", !r.symmetric);
+    if (r.symmetric) {
+      $("r-verifydoc").textContent = r.verify_doc;
+      $("r-durl-echo").textContent = r.d_url;
+      $("r-dl-vd").onclick = () =>
+        download(r.verify_doc_name || "verify.json", r.verify_doc, "application/json");
+    } else {
+      $("r-dl-priv").onclick = () => download(r.record_name + ".private.pem", r.private_pem);
+      $("r-dl-pub").onclick = () => download(r.record_name + ".public.pem", r.public_pem);
+    }
     renderFindings($("r-lint"), r.lint);
     $("r-out").classList.remove("hidden");
     $("r-out").scrollIntoView({ behavior: "smooth", block: "nearest" });
   } catch (e) {
     showErr($("r-err"), e.message);
   } finally {
-    btn.disabled = false; btn.textContent = "Generate record + key";
+    btn.disabled = false; syncRecordAlgo();
   }
 });
 

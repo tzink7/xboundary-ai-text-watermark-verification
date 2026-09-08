@@ -183,6 +183,7 @@ textarea {
   font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
   min-height: 108px; resize: vertical;
 }
+textarea.short { min-height: 64px; }
 textarea[readonly] { background: var(--bg-tint); color: var(--ink-soft); }
 textarea:disabled, textarea.grayed {
   background: var(--bg-tint); color: var(--ink-faint);

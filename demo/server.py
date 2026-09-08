@@ -506,14 +506,54 @@ def api_verify(body):
 
 
 # --------------------------------------------------------------------------- #
-# (c) build a TXT record + private key                                         #
+# (c) build a TXT record -- asymmetric (key pair) or k=symmetric (verify doc)   #
 # --------------------------------------------------------------------------- #
+
+def _typed_value(v):
+    """A verification-document extra that reads as a number/bool becomes one."""
+    if isinstance(v, (int, float, bool)):
+        return v
+    s = str(v).strip()
+    if s.lower() in ("true", "false"):
+        return s.lower() == "true"
+    try:
+        return int(s)
+    except ValueError:
+        pass
+    try:
+        return float(s)
+    except ValueError:
+        return s
+
+
+def _parse_extra(raw):
+    """Accept a dict, a list of {name,value} / [k,v], or "k=v" lines."""
+    out = []
+    if isinstance(raw, dict):
+        items = raw.items()
+    elif isinstance(raw, list):
+        items = []
+        for e in raw:
+            if isinstance(e, dict) and "name" in e:
+                items.append((e["name"], e.get("value", "")))
+            elif isinstance(e, (list, tuple)) and len(e) == 2:
+                items.append((e[0], e[1]))
+    elif isinstance(raw, str):
+        items = [ln.split("=", 1) for ln in raw.splitlines()
+                 if ln.strip() and "=" in ln]
+    else:
+        items = []
+    for k, v in items:
+        k = str(k).strip()
+        if k:
+            out.append((k, _typed_value(v)))
+    return out
+
 
 def api_make_record(body):
     domain = (body.get("domain") or "").strip().rstrip(".")
     selector = body.get("selector")
     algo = body.get("algorithm", "tzsataitw-1")
-    key_type = body.get("key_type", "ed25519")
     c = body.get("c", "sign")
     nb = body.get("nb") or "now"
     na = body.get("na") or "ongoing"
@@ -527,8 +567,6 @@ def api_make_record(body):
         return 400, {"error": "selector must be a number"}
     if not (1 <= selector <= 100000):
         return 400, {"error": "selector out of range"}
-    if key_type not in wdt.KEY_TYPES:
-        return 400, {"error": f"key type must be one of {', '.join(wdt.KEY_TYPES)}"}
     if c not in ("sign", "re-sign"):
         return 400, {"error": "c must be 'sign' or 're-sign'"}
     try:
@@ -536,6 +574,83 @@ def api_make_record(body):
         na_ts = wdt.parse_ts(na, allow_ongoing=True)
     except ValueError as exc:
         return 400, {"error": str(exc)}
+
+    r_tag = None
+    if r not in (None, "", 0, "0"):
+        try:
+            r_tag = str(int(r))
+        except (TypeError, ValueError):
+            return 400, {"error": "r must be a number"}
+
+    name = wdt.selector_name(selector, domain)
+    symmetric = bool(body.get("symmetric")) or algo in wdt.SYMMETRIC_ALGORITHMS
+
+    # ---- k=symmetric: no key pair; build the Section 6.6 verification document
+    if symmetric:
+        verify = (body.get("verify") or "").strip()
+        if not verify.lower().startswith("https://"):
+            return 400, {"error": "a k=symmetric record needs a 'verify' HTTPS URL "
+                                  "(the endpoint a third party POSTs text to)"}
+        canon_raw = body.get("canonicalization") or "strip-zero-width, nfc, trim"
+        if isinstance(canon_raw, str):
+            canon = [t.strip() for t in canon_raw.replace(",", " ").split() if t.strip()]
+        else:
+            canon = [str(t).strip() for t in canon_raw if str(t).strip()]
+        try:
+            extra = _parse_extra(body.get("extra"))
+        except Exception:
+            return 400, {"error": "could not parse the scheme parameters"}
+        ts_in = body.get("ts")
+        try:
+            if ts_in in (None, ""):
+                ts = int(time.time())
+            elif str(ts_in).strip().lower() in ("none", "off"):
+                ts = None
+            else:
+                ts = wdt.parse_ts(ts_in)
+        except ValueError as exc:
+            return 400, {"error": str(exc)}
+
+        try:
+            _, doc_bytes = wdt.build_verify_doc(algo, verify, canon, extra=extra, ts=ts)
+        except ValueError as exc:
+            return 400, {"error": str(exc)}
+        dh = wdt.compute_dh(doc_bytes, "sha-256", pad=False)
+        d_url = (body.get("d") or "").strip() or f"https://{domain}/watermark/verify.json"
+        if not d_url.lower().startswith("https://"):
+            return 400, {"error": "the d= URL must be HTTPS"}
+
+        tags = collections.OrderedDict()
+        tags["v"] = "1"
+        tags["a"] = algo
+        tags["k"] = "symmetric"
+        tags["c"] = c
+        tags["d"] = d_url
+        tags["dh"] = dh
+        tags["nb"] = str(nb_ts)
+        tags["na"] = str(na_ts)
+        if r_tag is not None:
+            tags["r"] = r_tag
+
+        record = wdt.build_record(tags)
+        lint = wdt.lint_record(record, selector=selector, domain=domain, is_make=False,
+                               descriptor_bytes=doc_bytes)
+        return 200, {
+            "record_name": name,
+            "record": record,
+            "zonefile": f'{name}. IN TXT "{record}"',
+            "symmetric": True,
+            "verify_doc": doc_bytes.decode("utf-8"),
+            "verify_doc_name": "verify.json",
+            "d_url": d_url,
+            "dh": dh,
+            "lint": findings_to_dict(lint, record_str=record),
+        }
+
+    # ---- asymmetric: generate a key pair, publish p=
+    key_type = body.get("key_type", "ed25519")
+    if key_type not in wdt.KEY_TYPES:
+        return 400, {"error": f"key type must be one of {', '.join(wdt.KEY_TYPES)}"}
 
     kp = wdt.generate_keypair(key_type)
     tags = collections.OrderedDict()
@@ -545,14 +660,10 @@ def api_make_record(body):
     tags["c"] = c
     tags["nb"] = str(nb_ts)
     tags["na"] = str(na_ts)
-    if r not in (None, "", 0, "0"):
-        try:
-            tags["r"] = str(int(r))
-        except (TypeError, ValueError):
-            return 400, {"error": "r must be a number"}
+    if r_tag is not None:
+        tags["r"] = r_tag
 
     record = wdt.build_record(tags)
-    name = wdt.selector_name(selector, domain)
     lint = wdt.lint_record(record, selector=selector, domain=domain, is_make=False)
     return 200, {
         "record_name": name,
@@ -660,6 +771,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/keys":
             return self._send(200, {"keys": list_demo_keys(),
                                     "algorithms": list(tz.ALGORITHMS),
+                                    "symmetric_algorithms": sorted(wdt.SYMMETRIC_ALGORITHMS),
                                     "key_types": list(wdt.KEY_TYPES),
                                     "homoglyphs": "".join(sorted(tz.HOMOGLYPH_REVERSE))})
         if path == "/api/fairoze-samples":
