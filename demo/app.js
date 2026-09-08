@@ -418,8 +418,14 @@ $("r-go").addEventListener("click", async () => {
     $("r-record").textContent = r.record;
     $("r-zone").textContent = r.zonefile;
 
-    $("r-dl-keys").classList.toggle("hidden", !!r.symmetric);
     $("r-verifydoc-wrap").classList.toggle("hidden", !r.symmetric);
+    $("r-nokey-note").classList.toggle("hidden", !r.symmetric);
+    for (const id of ["r-dl-priv", "r-dl-pub"]) {
+      const b = $(id);
+      b.disabled = !!r.symmetric;
+      b.title = r.symmetric ? "no key pair — this is a k=symmetric record" : "";
+      b.onclick = null;
+    }
     if (r.symmetric) {
       $("r-verifydoc").textContent = r.verify_doc;
       $("r-durl-echo").textContent = r.d_url;

@@ -233,6 +233,8 @@ button.mini {
   transition: background .12s, border-color .12s;
 }
 button.mini:hover { background: var(--bg-tint); border-color: var(--ink-faint); }
+button.mini:disabled { opacity: .5; cursor: not-allowed; }
+button.mini:disabled:hover { background: var(--surface-2); border-color: var(--line); }
 
 /* ------------------------------------------------------------------ output */
 .out { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--line-soft); }
