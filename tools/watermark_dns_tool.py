@@ -85,6 +85,8 @@ DESCRIPTOR_REQUIRED_FIELDS = ["received_from", "selector", "provider", "c", "ts"
 
 # draft Section 6.6: the required common fields of a k=symmetric verification doc
 VERIFY_DOC_REQUIRED_FIELDS = ["algorithm", "verify", "canonicalization"]
+# common fields not carried by the "a=" registration -- required ones plus "ts"
+VERIFY_DOC_COMMON_FIELDS = VERIFY_DOC_REQUIRED_FIELDS + ["ts"]
 VERIFY_DOC_CANON_TOKENS = {"strip-zero-width", "nfc", "trim"}
 
 # There is no IANA "a=" registry yet (Section 15). This is the local stand-in --
@@ -686,13 +688,16 @@ def build_descriptor(received_from, selector, provider, c, ts, extra=None, compa
     return obj, body.encode("utf-8")
 
 
-def build_verify_doc(algorithm, verify, canon, extra=None, compact=False):
+def build_verify_doc(algorithm, verify, canon, extra=None, compact=False, ts=None):
     """The draft Section 6.6 verification document for a k=symmetric record.
-    Required common fields first, then any scheme-specific extras."""
+    Common fields first (the three REQUIRED ones, then the OPTIONAL "ts"),
+    then any scheme-specific extras."""
     obj = OrderedDict()
     obj["algorithm"] = algorithm
     obj["verify"] = verify
     obj["canonicalization"] = list(canon)
+    if ts is not None:
+        obj["ts"] = int(ts)
     for k, v in (extra or []):
         if k in obj:
             raise ValueError(f"extra field {k!r} collides with a required field")
@@ -724,6 +729,8 @@ def validate_verify_doc_obj(obj, f, record_algorithm=None):
                        f"canonicalization has token(s) {unknown} this document does not "
                        f"define ({sorted(VERIFY_DOC_CANON_TOKENS)}); a verifier that does "
                        f"not know them MUST treat the document as unusable (Section 6.6)")
+    if "ts" in obj and not re.fullmatch(r"-?\d+", str(obj["ts"])):
+        f.warn("VD-TS", f"ts={obj['ts']!r} -- should be a Unix epoch integer (Section 6.6)")
 
 
 def cmd_make_verify_doc(args):
@@ -758,8 +765,17 @@ def cmd_make_verify_doc(args):
         k, _, v = pair.partition("=")
         extra.append((k.strip(), _typed(v.strip())))
 
+    # "ts" is OPTIONAL (Section 6.6) but the builder fills it by default so the
+    # published document is dated. --ts overrides; --ts none omits it.
+    if args.ts and args.ts.lower() in ("none", "off", ""):
+        ts = None
+    elif args.ts:
+        ts = parse_ts(args.ts)
+    else:
+        ts = int(time.time())
+
     obj, body = build_verify_doc(args.algorithm, args.verify, canon,
-                                 extra=extra, compact=args.compact)
+                                 extra=extra, compact=args.compact, ts=ts)
     f = Findings()
     validate_verify_doc_obj(obj, f, record_algorithm=args.algorithm)
 
@@ -1312,7 +1328,7 @@ def lint_record(record_text, selector=None, domain=None, is_make=False,
             if isinstance(parsed, dict) and doc_kind == "verify-doc":
                 validate_verify_doc_obj(OrderedDict(parsed), f,
                                         record_algorithm=tags.get("a"))
-                extras = [k for k in parsed if k not in VERIFY_DOC_REQUIRED_FIELDS]
+                extras = [k for k in parsed if k not in VERIFY_DOC_COMMON_FIELDS]
                 if extras:
                     f.info("VD-EXTRA",
                            f"verification document carries scheme-specific field(s): "
@@ -1711,6 +1727,7 @@ _ROW_FOR_CODE = {
     "D-SIGN-SOURCE": "d= doc",
     "VD-MISSING": "d= doc", "VD-ALGORITHM": "d= doc", "VD-VERIFY-SCHEME": "d= doc",
     "VD-CANON-TYPE": "d= doc", "VD-CANON-TOKEN": "d= doc", "VD-EXTRA": "d= doc",
+    "VD-TS": "d= doc",
 }
 _TABLE_ROW_ORDER = ["syntax", "v", "a", "p", "k", "c", "d", "dh", "s", "nb", "na",
                     "validity", "r", "custody", "d= doc", "other"]
@@ -1723,7 +1740,7 @@ _DESCRIPTOR_COVERED = {
     "D-MISSING", "D-C-VALUE", "D-SELECTOR", "D-PROVIDER", "D-TS", "D-EXTRA",
     "D-SIGN-SOURCE", "D-C-MISMATCH", "D-JSON",
     "VD-MISSING", "VD-ALGORITHM", "VD-VERIFY-SCHEME", "VD-CANON-TYPE",
-    "VD-CANON-TOKEN", "VD-EXTRA",
+    "VD-CANON-TOKEN", "VD-EXTRA", "VD-TS",
 }
 
 
@@ -1862,8 +1879,15 @@ def _verify_doc_field_rows(parsed, record_tags):
         else:
             rows.append(("canonicalization", "ok", f'{canon}'))
 
+    if "ts" in parsed:
+        ts = parsed["ts"]
+        if re.fullmatch(r"-?\d+", str(ts)):
+            rows.append(("ts", "ok", f"{ts}  ({_fmt_dt(ts)})"))
+        else:
+            rows.append(("ts", "WARN", f'"{ts}" -- should be a unix epoch integer'))
+
     for k, v in parsed.items():
-        if k not in VERIFY_DOC_REQUIRED_FIELDS:
+        if k not in VERIFY_DOC_COMMON_FIELDS:
             rows.append((k, "info", f'{v!r} -- scheme parameter (OPTIONAL, Section 6.6)'))
     return rows
 
@@ -1877,8 +1901,12 @@ def describe_verify_doc(obj):
     canon = obj.get("canonicalization")
     canon_note = (f"; canonicalize with {' -> '.join(canon)} first"
                   if isinstance(canon, list) and canon else "")
+    ts = obj.get("ts")
+    ts_note = (f"; this verification document was published {_fmt_ts(ts)}"
+               if ts is not None and re.fullmatch(r"-?\d+", str(ts)) else "")
     return (f"symmetric scheme {algo}: a verifier POSTs the (canonicalized) text to "
-            f"{verify} and trusts that endpoint's watermarked/score verdict{canon_note}")
+            f"{verify} and trusts that endpoint's watermarked/score verdict"
+            f"{canon_note}{ts_note}")
 
 
 def _wrap_cell(text, width):
@@ -2706,9 +2734,10 @@ def _run_wizard(args):
                     except ValueError:
                         pass
                 vextra.append((k, v))
+            vd_ts = parse_ts(_ask("ts (document publish time: unix / 'now' / ISO date)", "now"))
             compact = _ask_yesno("Minified JSON? (default: indented)", "n")
             descriptor_path = _ask("Verification-document output path", "verify.json")
-            _, body = build_verify_doc(algorithm, verify_url, canon, vextra, compact)
+            _, body = build_verify_doc(algorithm, verify_url, canon, vextra, compact, ts=vd_ts)
             with open(descriptor_path, "wb") as fh:
                 fh.write(body)
             dh_algo = _ask_choice("dh= hash algorithm", ["sha-256", "sha-384", "sha-512"], "sha-256")
@@ -2930,7 +2959,9 @@ def build_parser():
     g = p.add_argument_group("--make-descriptor / --make-verify-doc")
     g.add_argument("--received-from", help="[--make-descriptor] upstream provider domain, or free text  (REQUIRED)")
     g.add_argument("--provider", help="[--make-descriptor] this (signing) provider's domain  (REQUIRED)")
-    g.add_argument("--ts", help="[--make-descriptor] publish timestamp: unix seconds, 'now', ISO date (default now)")
+    g.add_argument("--ts", help="publish timestamp for the d= document: unix seconds, "
+                                "'now', ISO date (default now); 'none' omits it "
+                                "(verification document only)")
     g.add_argument("--verify", help="[--make-verify-doc] the HTTPS verification endpoint  (REQUIRED)")
     g.add_argument("--canon", help="[--make-verify-doc] comma-separated canonicalization tokens "
                                    "(default 'strip-zero-width,nfc,trim')")

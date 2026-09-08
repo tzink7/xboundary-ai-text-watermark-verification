@@ -150,6 +150,7 @@ D_DOCUMENT_EXAMPLE = {
     "algorithm": ALGORITHM_ID,
     "verify": "https://demo.terryzink.com/watermark/verify",
     "canonicalization": ["strip-zero-width", "nfc", "trim"],   # draft §6.6 tokens
+    "ts": 1788800000,                                          # §6.6: publish time (OPTIONAL)
     "key_model": "symmetric",
     "detector": DETECTOR,
     "tokenizer": "Qwen/Qwen2.5-3B-Instruct",

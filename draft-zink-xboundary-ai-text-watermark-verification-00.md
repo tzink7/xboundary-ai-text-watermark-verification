@@ -241,11 +241,12 @@ One gap this does not resolve: if "example.org" is not itself in a verifier's pr
 
 A record carrying "k=symmetric" (Section 6.1) has no public key, and its "d=" tag is REQUIRED and points to a JSON *verification document* rather than a custody descriptor (Section 7.2). Because detection under a symmetric scheme can only be performed by the key holder, this document tells a third party where to send the text and how to prepare it first.
 
-The document MUST be a UTF-8 JSON object. Three fields are common to every verification document, whatever the algorithm:
+The document MUST be a UTF-8 JSON object. Four fields are common to every verification document, whatever the algorithm; the first three are REQUIRED:
 
 * "algorithm" -- REQUIRED. The "a=" value this document describes. A verifier MUST reject the document if this does not match the "a=" of the DNS record that referenced it.
 * "verify" -- REQUIRED. An HTTPS URL (HTTPS REQUIRED; plain HTTP MUST NOT be used). A verifier submits the canonicalized text to this endpoint by HTTP POST, with "Content-Type: text/plain; charset=utf-8" and the text as the request body. The endpoint returns a JSON object with at least `{"algorithm": <string>, "watermarked": <boolean>}` and SHOULD also return "score" and "threshold" numbers so a verifier can present confidence rather than a bare yes/no. The endpoint MAY rate-limit; a verifier MUST treat HTTP 429 or 503 as "could not verify", never as a negative result.
 * "canonicalization" -- REQUIRED. An ordered JSON array of transform tokens a verifier MUST apply to the text, in order, before submitting it to "verify". This document defines three tokens: "strip-zero-width" (remove U+200B, U+200C, U+200D, U+2060), "nfc" (Unicode Normalization Form C), and "trim" (remove leading and trailing whitespace). An "a=" registration MAY define additional tokens; a verifier encountering an unknown token MUST treat the document as unusable rather than skip that step.
+* "ts" -- OPTIONAL. The Unix timestamp (integer seconds) at which this verification document was last published, letting a verifier gauge its freshness and a provider that has rotated its "verify" endpoint or detection parameters show when. It is informational: a verifier MUST NOT reject a document, or downgrade its result, solely because "ts" is absent, old, or slightly in the future.
 
 An "a=" registration (Section 15) MAY define further algorithm-specific fields -- for a statistical scheme, the tokenizer identifier, context parameters, and detection threshold that let a party already holding the secret key reproduce detection locally. These are OPTIONAL to publish: a verifier without the key cannot use them, a provider MAY prefer to keep the detector's internal structure private, and when present they are informational, carrying no normative weight for the "verify"-endpoint flow.
 
@@ -258,6 +259,7 @@ Example, for a "synthid-1" record:
   "algorithm": "synthid-1",
   "verify": "https://example.ai/watermark/verify",
   "canonicalization": ["strip-zero-width", "nfc", "trim"],
+  "ts": 1788800000,
 
   "detector": "masked-mean",
   "tokenizer": "Qwen/Qwen2.5-3B-Instruct",
@@ -265,6 +267,8 @@ Example, for a "synthid-1" record:
   "threshold": 0.5123
 }
 ```
+
+In this case, rather than attempting to verify a mark itself (wich wouldn't be possible given that synthid-1 is a symmetric watermarking algorithm, and the verifier wouldn't have access to the private key), a verifier would then refer to https://example.ai/watermark/verify, either in some sort of automated fashion or with messaging to the user to navigate there directly. 
 
 # Multi-Hop Attestation
 
