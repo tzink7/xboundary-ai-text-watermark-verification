@@ -93,13 +93,15 @@
     <div class="err-msg hidden" id="wm-err"></div>
 
     <div class="out hidden" id="wm-out">
-      <label>Watermarked text</label>
+      <div class="viz-toggle" id="wm-viz-toggle">
+        <label>Watermarked text</label>
+        <span class="viz-toggle-actions">
+          <label id="wm-viz-label"><input type="checkbox" id="wm-viz"> reveal the hidden / look-alike characters</label>
+          <button class="mini" id="wm-copy">copy</button>
+        </span>
+      </div>
       <textarea id="wm-result" readonly></textarea>
       <pre id="wm-result-viz" class="hidden"></pre>
-      <div class="viz-toggle" id="wm-viz-toggle">
-        <label id="wm-viz-label"><input type="checkbox" id="wm-viz"> reveal the hidden / look-alike characters</label>
-        <button class="mini" id="wm-copy">copy</button>
-      </div>
       <div class="kv" id="wm-meta"></div>
     </div>
   </section>

@@ -320,11 +320,16 @@ pre.report {
 #v-notes:empty, #l-notes:empty { display: none; }
 
 .viz-toggle {
-  display: flex; align-items: center; gap: 12px;
-  margin-top: 10px; font-size: 12px; color: var(--ink-soft);
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 12px 16px; flex-wrap: wrap; margin: 0 0 6px;
 }
-.viz-toggle label { margin: 0; font-weight: 400; display: flex; align-items: center; gap: 6px; }
-.viz-toggle input { width: auto; accent-color: var(--accent); }
+.viz-toggle > label { margin: 0; }
+.viz-toggle-actions {
+  display: flex; align-items: center; gap: 12px;
+  font-size: 12px; color: var(--ink-soft);
+}
+.viz-toggle-actions label { margin: 0; font-weight: 400; display: flex; align-items: center; gap: 6px; }
+.viz-toggle-actions input { width: auto; accent-color: var(--accent); }
 
 .opt-check {
   display: flex; align-items: flex-start; gap: 8px;
