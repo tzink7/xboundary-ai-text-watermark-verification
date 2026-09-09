@@ -369,46 +369,72 @@ function renderManifest(r) {
     vd.className = "verdict warn"; vd.textContent = "OUTER VALID — inner mark not verified";
   }
 
+  const outerSig = o.detail ? "could not check — " + o.detail
+    : o.verified ? "VALID"
+    : o.signature_ok ? "signature valid, but the record rejects this use (a= mismatch)"
+    : "INVALID — does not verify";
   kv($("v-meta"), [
-    ["type", "double signature — zero-width manifest + " + inner.map((m) => m.scheme).join(", ")],
-    ["outer signature", o.detail ? "could not check (" + o.detail + ")"
-                      : o.verified ? "VALID"
-                      : o.signature_ok ? "signature valid, but the record rejects it"
-                      : "INVALID"],
+    ["layer", "OUTER — tzsataitw-1 signed manifest (double signature)"],
+    ["algorithm", "tzsataitw-1"],
+    ["channel", r.channel],
+    ["signature", outerSig],
+    ["signed over", r.signed_over],
+    ["verified against", o.key_source || ("the DNS TXT record at " + o.sig_locator)],
     ["signed by", o.sig_locator],
-    ["outer record a=", o.record_algorithm || "—"],
+    ["record a=", o.record_algorithm || "—"],
+    ["public key (b64)", o.public_key_b64],
+    ["signature (hex)", o.signature_hex],
     ["canonical chars", r.canonical_chars],
     ["canonical sha256", r.canonical_sha256],
   ]);
 
   const box = $("v-notes"); box.innerHTML = "";
-  const list = document.createElement("div"); list.className = "findings";
-  const head = document.createElement("div"); head.className = "head";
-  head.textContent = `referenced marks (${inner.length})` +
-    (o.verified ? "" : " — not followed (outer signature not valid)");
-  list.appendChild(head);
+  const head = document.createElement("div");
+  head.className = "manifest-head";
+  head.textContent = o.verified
+    ? `Referenced marks (${inner.length}) — followed from the verified manifest`
+    : `Referenced marks (${inner.length}) — NOT followed (the outer signature is not valid, so the pointers are untrusted)`;
+  box.appendChild(head);
+
   for (const m of inner) {
-    const d = document.createElement("div");
-    if (m.verified === true) {
-      d.className = "OK";
-      let t = `${m.scheme} @ ${m.locator}  →  VALID`;
-      if (m.score != null) t += `  (score ${m.score.toFixed(4)} ≥ ${(m.threshold || 0).toFixed(4)})`;
-      d.textContent = t;
-    } else if (m.verified === false) {
-      d.className = "ERROR";
-      d.textContent = `${m.scheme} @ ${m.locator}  →  NOT VERIFIED — ${m.detail || "failed"}`;
-    } else {
-      d.className = "INFO";
-      d.textContent = `${m.scheme} @ ${m.locator}  →  ${m.detail || m.note || "not checked"}`;
+    const wrap = document.createElement("div");
+    wrap.className = "manifest-mark";
+    const title = document.createElement("div");
+    const state = m.verified === true ? "VALID"
+      : m.verified === false ? "NOT VERIFIED" : "NOT CHECKED";
+    title.className = "manifest-mark-title "
+      + (m.verified === true ? "OK" : m.verified === false ? "ERROR" : "INFO");
+    title.textContent = `${m.scheme} @ ${m.locator}  —  ${state}`;
+    wrap.appendChild(title);
+
+    const rows = [["layer", "INNER — referenced by the manifest"]];
+    if (m.scheme === "synthid-1") {
+      rows.push(
+        ["algorithm", m.algorithm || "synthid-1"],
+        ["channel", m.channel],
+        ["check", m.verified === true ? "score above threshold"
+                : m.verified === false ? "score below threshold" : "—"],
+        ["detector", m.engine === "live" ? "SynthID masked-mean, run live"
+                   : m.engine === "table" ? "pre-computed (no detector installed)" : undefined],
+        ["score", m.score != null ? m.score.toFixed(6) : undefined],
+        ["threshold", m.threshold != null ? m.threshold.toFixed(6) : undefined],
+        ["tokens scored", m.tokens_scored],
+        ["verify endpoint", m.verify_endpoint],
+        ["record a=", m.record_algorithm],
+      );
     }
-    list.appendChild(d);
+    rows.push(["detail", m.detail || m.note]);
+    const sub = document.createElement("div"); sub.className = "kv";
+    kv(sub, rows);
+    wrap.appendChild(sub);
+    box.appendChild(wrap);
   }
   if (r.inner_skipped) {
-    const d = document.createElement("div"); d.className = "WARN";
+    const d = document.createElement("div");
+    d.className = "manifest-head warn";
     d.textContent = r.inner_skipped;
-    list.appendChild(d);
+    box.appendChild(d);
   }
-  box.appendChild(list);
 
   $("v-out").classList.remove("hidden");
   $("v-out").scrollIntoView({ behavior: "smooth", block: "nearest" });

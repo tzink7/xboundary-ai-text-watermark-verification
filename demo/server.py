@@ -698,6 +698,8 @@ def _verify_double_signature(text):
     try:
         der, tags = tz.key_der_from_dns(sig_locator)
         outer["record_algorithm"] = tags.get("a")
+        outer["public_key_b64"] = tags.get("p")
+        outer["key_source"] = f"the public key in the DNS TXT record at {sig_locator}"
         kpath = tz._tmp(der)
         try:
             outer["signature_ok"] = tz.ed25519_verify(kpath, msg, sig, "DER")
@@ -718,6 +720,8 @@ def _verify_double_signature(text):
     result = {
         "mark_found": True, "kind": "manifest",
         "channel": tz.ZeroWidthChannel().summary,
+        "algorithm": "tzsataitw-1", "signed_over": "tzsataitw/manifest/v1 + marks + "
+        "sig_locator + canonical_text",
         "outer": outer,
         "marks": [{"scheme": s, "locator": loc} for s, loc in marks],
         "canonical_chars": len(canon),

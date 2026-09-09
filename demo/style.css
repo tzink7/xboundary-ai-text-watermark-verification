@@ -310,6 +310,23 @@ pre.report {
 .findings .head  { color: var(--ink); font-weight: 600; }
 .findings .head::before { background: transparent; }
 
+/* -------------------------------------------------- double-signature chain */
+.manifest-head {
+  margin: 16px 0 8px; font: 600 12px/1.4 var(--sans);
+  letter-spacing: .01em; color: var(--ink-soft);
+}
+.manifest-head.warn { color: var(--warn); }
+.manifest-mark { margin-top: 10px; }
+.manifest-mark-title {
+  font: 600 12px/1.4 var(--mono);
+  padding: 6px 10px; border-radius: var(--radius-s) var(--radius-s) 0 0;
+  border: 1px solid var(--line); border-bottom: none;
+}
+.manifest-mark-title.OK    { color: var(--ok);  background: var(--ok-wash); }
+.manifest-mark-title.ERROR { color: var(--err); background: var(--err-wash); }
+.manifest-mark-title.INFO  { color: var(--ink-soft); background: var(--surface-2); }
+.manifest-mark .kv { margin-top: 0; border-radius: 0 0 var(--radius-s) var(--radius-s); }
+
 .hint {
   color: var(--ink-faint); font: 400 11.5px/1.5 var(--sans); letter-spacing: 0;
 }
