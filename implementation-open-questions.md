@@ -354,6 +354,30 @@ mechanism, so this is a real, usable pairing — not a stand-in.
 
 ## F. Layered detection architecture (working-group seed)
 
+**STATUS (2026-09-08): the core of this section is now in the draft.** Draft
+Section 8 "Composed Marks (Double Signatures)" was added, promoting F2 (and
+resolving F1, F3, F5) from open question to normative text. It was prototyped
+first -- `tools/tzsataitw.py --co-sign` / `--verify`, `tests/test_tzsataitw_manifest.py`,
+and the demo's Watermark + Verify tabs -- then written up. What remains open:
+the manifest's concrete byte layout (draft Section 8.3 defers it to the `a=`
+registration in Section 16, which does not exist yet; the prototype's layout is
+in `tools/tzsataitw.py` `pack_manifest_prefix` / `unpack_manifest`), plus F4 and
+F6 below. **Deltas between the F2 sketch and what shipped:**
+- Signed bytes: sketch said `manifest || strip_marks(text)`. Shipped:
+  `b"tzsataitw/manifest/v1\n" || <manifest bytes before the sig> || 0x00 ||
+  canonical_text(text)` -- domain-separated, with `canonical_text` = strip
+  marks + NFC + trim (not bare `strip_marks`).
+- Frame: a distinct MAGIC `ZWM\0`, not a `FRAME_VERSION` bump.
+- Manifest holds only the *referenced* (inner) marks; the outer frame's own
+  key location is a separate `sig_locator` field (sketch folded it into
+  `marks[0]`).
+- No per-entry `verify_hint` and no per-entry `canon`: a symmetric inner mark
+  is discovered through the standard path -- its locator -> DNS record with
+  `k=symmetric` + `d=` -> Section 6.6 document -> `verify` endpoint. The
+  `access` field (draft Section 6.6) covers the "you may need credentials"
+  case the sketch worried about.
+- Encoding: simple 1-byte-length-prefixed binary, not CBOR.
+
 A deployment can stack more than one mark on the same text. Proposed layering,
 outermost-first at verification time:
 
@@ -364,10 +388,12 @@ outermost-first at verification time:
    survives arbitrary editing, works on any length, but erased by normalization.
    Its frame carries a signed **verification manifest** (F2) -- the ordered
    recipe for checking every mark on the text.
-3. **Discovery + procedure:** the manifest names each mark's DNS record and
-   canonicalization. A symmetric mark can only carry a `verify_hint` URL. If the
-   zero-width frame is gone, fall back to brute-forcing the cached key set with
-   every scheme's detector (draft §6.4 step 5).
+3. **Discovery + procedure:** the manifest names each mark's DNS record. A
+   symmetric mark's record carries `k=symmetric` + `d=` -> a Section 6.6
+   verification document naming the provider's `verify` endpoint (this replaced
+   the sketch's ad-hoc `verify_hint` field). If the zero-width frame is gone,
+   fall back to brute-forcing the cached key set with every scheme's detector
+   (draft §6.4 step 5).
 4. **Out of scope:** a generic AI-text classifier (e.g. Pangram) as a final
    "is this AI at all?" check. Different guarantee (probabilistic, no attribution,
    no non-repudiation), a paid API, and it reintroduces the walled-garden
@@ -379,19 +405,19 @@ adversary must both normalize *and* paraphrase to strip both.
 
 ### Decisions the WG inherits
 
-**F1. Canonicalization coordination.** If zero-width layering is standard,
-`fairoze-1`'s `canonicalize()` MUST strip U+200B/U+200C/U+200D/U+2060 before
-window extraction -- interleaved zero-width chars otherwise shift every hash
-window and Fairoze detection fails. This resolves the question deferred in
-`tools/fairoze_profile.py`: the answer becomes "yes, strip them." Verification
-order: parse the zero-width frame first, then run Fairoze on the stripped text.
-`tzsataitw` already signs over `strip_marks(text)` and the statistical mark is
-invisible at the character level, so that direction composes with no change.
+**F1. Canonicalization coordination. RESOLVED -- draft Section 8.5.** The inner
+scheme runs on the outer-channel-stripped text, canonicalized by its own rules;
+Section 6.6's token set is a superset of the outer strip and idempotent w.r.t.
+it. For `fairoze-1` specifically, `canonicalize()` must still strip
+U+200B/U+200C/U+200D/U+2060 before window extraction (the answer deferred in
+`tools/fairoze_profile.py` is "yes, strip them") -- but the draft states the
+principle rather than the per-scheme detail.
 
-**F2. The zero-width frame as a signed verification manifest.** `tzsataitw`'s
-payload is `locator_len | locator | sig(64)` -- one unsigned locator. The
-proposal (2026-09-03) is to make it an ordered, *signed* manifest that tells a
-verifier exactly what to do:
+**F2. The zero-width frame as a signed verification manifest. IN THE DRAFT --
+Section 8.3 / 8.5.** Historical sketch below; see the STATUS note at the top of
+Section F for what actually shipped. `tzsataitw`'s original payload was
+`locator_len | locator | sig(64)` -- one unsigned locator. The 2026-09-03
+proposal was an ordered, *signed* manifest:
 
 ```
 version
@@ -433,32 +459,46 @@ Open points:
   the `fairoze-*` entry appears only when the text is long enough to also carry
   a Fairoze mark.
 
-**F3. The manifest is an optimization, never load-bearing.** The zero-width
-carrier is itself strippable, so a normalized copy loses the whole manifest.
-Brute-forcing the key cache MUST remain the always-available path: try each
-scheme's detection against each cached key, with each scheme's own
-canonicalization. The tools don't have this yet -- `tzsataitw` has no
-`--seed-file` cache mode, the `fairoze` verifier is single-key -- so a shared
-cache/seed-list verifier that runs every scheme is its own work item.
+**F3. The manifest is an optimization, never load-bearing. RESOLVED -- draft
+Section 8.6.** ("Implementations MUST treat a missing or unverifiable manifest
+as a routine case, not an error.") Still an implementation gap: the always-
+available brute-force path needs a shared cache/seed-list verifier that runs
+every scheme -- `tzsataitw` has no `--seed-file` cache mode, the `fairoze`
+verifier is single-key. Own work item.
 
-**F4. Brute-force is safe for this stack** -- state it explicitly. Draft §14
-flags multiple-hypothesis-testing as a hazard, but that is for *statistical*
-detectors. Both layers here are cryptographic (Ed25519); trying N cached keys
-cannot manufacture a false positive. The §14 concern does not apply.
+**F4. Brute-force is safe for this stack** -- still worth stating explicitly.
+Draft §15 (Open Questions) flags multiple-hypothesis-testing as a hazard, but
+that is for *statistical* detectors. When both layers are cryptographic
+(Ed25519), trying N cached keys cannot manufacture a false positive; the concern
+returns only for a *symmetric statistical* inner mark checked via its endpoint.
+Not yet stated in the draft. **STILL OPEN.**
 
-**F5. Does double-signing need DNS/custody representation?** Two marks at one hop
-is not a `d=` custody handoff. A verifier finding a `fairoze-1` mark from
-`3._watermark-text.x` and a `tzsataitw-1` mark from `4._watermark-text.x` just
-learns "x generated this, two ways." Probably no new tag -- but confirm §7.4's
-composite-key discussion does not need to extend to same-hop multi-mechanism.
+**F5. Does double-signing need DNS/custody representation? RESOLVED -- draft
+Section 8.4.** A single-provider composed mark needs no Section 7.2 custody
+descriptor -- the signed manifest is the record, cryptographically bound. A
+cross-provider composition (inner and outer from different providers) is a
+cross-vendor re-sign and Section 7.1 applies in addition.
 
 **F6. Optional: Fairoze message as a locator.** `fairoze-1`'s 8-byte embedded
 message is currently a random nonce. It could instead be a short locator /
 locator-hash so the statistical layer carries its own routing hint. No
 robustness gain, saves one lookup. Open design choice.
 
+### Still open after draft Section 8
+- **The manifest byte layout** -- draft §8.3 defers it to the `a=` registration
+  (§16). Prototype layout: `tools/tzsataitw.py` (`_lp` length-prefixed fields,
+  MAGIC `ZWM\0`). Needs a real registration entry, plus a capacity/migration
+  story for the zero-width channel.
+- **F4** -- the MHT-safety statement for the mixed cryptographic/statistical case.
+- **F6** -- Fairoze message as a locator (design choice, not blocking).
+- **The always-available brute-force verifier** (F3 implementation gap): a
+  shared cache/seed-list tool that runs every scheme's detector.
+- **A real `POST verify` endpoint on the demo** so §6.6's contract and
+  `tzsataitw.py --inner-verify endpoint` are exercised against something live
+  (the demo currently does the inner check in-process).
+
 ### Membership / scope note
 This is an *implementation & considerations* group -- composition, wire formats,
 canonicalization, cache policy, deployment-pipeline scope. Distinct from changes
-to the core draft (§6/§7 mechanism). Findings here feed the draft's §13/§14 or a
+to the core draft (§6/§7 mechanism). Findings here feed the draft's §8/§14 or a
 companion document, not §6.1 normative text directly.
