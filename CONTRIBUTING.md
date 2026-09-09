@@ -6,7 +6,7 @@ This is a discussion draft, not a finished specification. It's published to be s
 
 - **Open an issue** for anything that's unclear, wrong, underspecified, or inconsistent with another part of the draft.
 - **Open a pull request** for wording fixes, structural cleanup, or technical corrections.
-- **Work an open question.** [Section 14](./draft-zink-xboundary-ai-text-watermark-verification-00.md) is effectively a pre-built backlog — each bullet there is a reasonable candidate for its own issue if one doesn't already exist.
+- **Work an open question.** [Section 15](./draft-zink-xboundary-ai-text-watermark-verification-01.md) is effectively a pre-built backlog — each bullet there is a reasonable candidate for its own issue if one doesn't already exist.
 
 ## Filing a good issue
 
@@ -17,12 +17,12 @@ Include, where relevant:
 - What's wrong, ambiguous, or missing — a contradiction, a gap, a term used inconsistently, a worked example that doesn't match the tag definitions
 - A suggested fix, if you have one — not required, but useful
 
-Rough labels to use if the repo has them set up: `open-question` (tracking an item from §14), `bug` (an actual inconsistency or error), `editorial` (wording/grammar/structure), `discussion` (something that needs a decision before it can be fixed).
+Rough labels to use if the repo has them set up: `open-question` (tracking an item from §15), `bug` (an actual inconsistency or error), `editorial` (wording/grammar/structure), `discussion` (something that needs a decision before it can be fixed).
 
 ## Before filing
 
 - Skim open issues and PRs for something that already covers it.
-- If your change touches a section number (adding, removing, or reordering a section), the cross-references elsewhere in the document need to stay accurate. Run `python3 section_ref_checker.py draft-zink-xboundary-ai-text-watermark-verification-00.md` first — it flags references pointing at section numbers that no longer exist, and gives you a side-by-side view of every other reference so you can catch the ones that point at the *wrong* (but still existing) section. This has caught real bugs in earlier revisions; it's optional but recommended.
+- If your change touches a section number (adding, removing, or reordering a section), the cross-references elsewhere in the document need to stay accurate. Run `python3 section_ref_checker.py draft-zink-xboundary-ai-text-watermark-verification-01.md` first — it flags references pointing at section numbers that no longer exist, and gives you a side-by-side view of every other reference so you can catch the ones that point at the *wrong* (but still existing) section. This has caught real bugs in earlier revisions; it's optional but recommended.
 
 ## Conventions worth keeping consistent
 

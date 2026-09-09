@@ -4,7 +4,7 @@ tzsataitw.py -- Terry Zink's Super Awesome Test AI-Text Watermark generator
 
 Standalone reference implementations of toy watermarking algorithms, for
 exercising the DNS framework in draft-zink-xboundary-ai-text-watermark-
-verification-00. Companion to watermark_dns_tool.py (which distributes keys and
+verification-01. Companion to watermark_dns_tool.py (which distributes keys and
 checks records); this tool actually marks and verifies text.
 
     --generate     embed a watermark in text, using an Ed25519 private key

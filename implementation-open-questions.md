@@ -3,8 +3,8 @@
 **Status:** working notes, not part of the draft. Started 2026-09-02 while building
 `tools/watermark_dns_tool.py`, `tools/tzsataitw.py`, and the demo server; extended
 2026-09-03 while implementing the `fairoze-1` verifier (`tools/fairoze.py`,
-Steps 1-4). To be triaged later — some items belong in §14 (open questions), some
-in §6/§7 as normative text, some in §13 (future expansion).
+Steps 1-4). To be triaged later — some items belong in §15 (open questions), some
+in §6/§7 as normative text, some in §14 (future expansion).
 
 **2026-09-04:** Sections A and B, and D2, are now resolved into the draft --
 each item below is marked **RESOLVED** with a pointer to where. C, D1/D3/D4/D5,
@@ -14,38 +14,38 @@ per-algorithm registry entry rather than core draft text, E is a project/demo
 decision rather than draft text, and F is unbuilt working-group seed material.
 
 Section references are to
-`draft-zink-xboundary-ai-text-watermark-verification-00.md`.
+`draft-zink-xboundary-ai-text-watermark-verification-01.md`.
 
 ---
 
 ## A. Internal contradictions (the draft disagrees with itself)
 
-### A1. `s=deprecated` — §6.1 vs §9.2
+### A1. `s=deprecated` — §6.1 vs §10.2
 - §6.1: `s=` values are `"active" or "revoked"`, no others.
-- §9.2: on compromise, set `s=revoked` **"(or s=deprecated)"**.
+- §10.2: on compromise, set `s=revoked` **"(or s=deprecated)"**.
 - **Implementation:** `watermark_dns_tool.py` accepts `s=deprecated` and treats it
   as revoked-equivalent (`lint_record`, `is_key_valid_at`), but its `S-VALUE`
   error text still reads "must be 'active' or 'revoked'".
-- **Resolution needed:** drop "(or s=deprecated)" from §9.2, **or** define
+- **Resolution needed:** drop "(or s=deprecated)" from §10.2, **or** define
   `deprecated` in §6.1. If kept, it should mean something §6.1 can't already
   express — e.g. "MUST NOT sign new text under this selector, but text already
   signed inside its `nb`/`na` window still verifies" (a soft-retire distinct from
   both ordinary rotation and hard revocation).
-- **RESOLVED (2026-09-04):** dropped "(or s=deprecated)" from §9.2's Key
+- **RESOLVED (2026-09-04):** dropped "(or s=deprecated)" from §10.2's Key
   Lifecycle bullet. `s=` is `active`/`revoked` only, consistently.
 
 ### A2. Unrecognized `a=` — MUST vs SHOULD
 - §6.1: an unregistered/unrecognized `a=` **"MUST cause a verifier to treat the
   record as unusable."**
-- §15: verifiers **"SHOULD treat such records as unusable."**
+- §16: verifiers **"SHOULD treat such records as unusable."**
 - **Implementation:** `A-REGISTRY` finding is a `WARN`, not a hard failure —
   there is no "reject this record" path in the toolchain for an unknown `a=`.
 - **Resolution needed:** one normative level. If MUST, a compliance check should
   reject the record; the draft should also acknowledge that no verifier can have
-  a complete registry until the IANA registry (§15) exists, so "unrecognized"
+  a complete registry until the IANA registry (§16) exists, so "unrecognized"
   is under-defined in the interim.
-- **RESOLVED (2026-09-04):** §6.1 now says SHOULD, matching §15 -- one
-  normative level. §15 also gained an explicit carve-out: a verifier MAY treat
+- **RESOLVED (2026-09-04):** §6.1 now says SHOULD, matching §16 -- one
+  normative level. §16 also gained an explicit carve-out: a verifier MAY treat
   an unrecognized `a=` as usable when experimenting with a new algorithm
   (one's own, or someone else's) to test end-to-end functionality.
 
@@ -70,18 +70,18 @@ invisible characters.
   before detection (the second option above).
 
 ### B2. Source of the "text generation timestamp" — undefined
-- §9.2: "Verifiers **MUST** evaluate text generation timestamps against these
+- §10.2: "Verifiers **MUST** evaluate text generation timestamps against these
   [`nb`/`na`] windows."
 - §7.5(b): "the approximate time the text **appears** to have been produced."
 - Nothing carries that timestamp: not the watermark payload, not the DNS record,
   not the `d=` descriptor (its `ts` is descriptor-publication time, not text
   generation time).
 - **Implementation:** the verifier can only evaluate "valid now", or a manually
-  supplied time (`--at` flag). The §9.2 MUST is otherwise unimplementable.
+  supplied time (`--at` flag). The §10.2 MUST is otherwise unimplementable.
 - **Resolution needed:** define where the timestamp comes from (watermark
   payload? out-of-band metadata? not available?), downgrade the MUST, or list it
-  as an explicit §14 open question.
-- **RESOLVED (2026-09-04):** sidesteps the undefined source entirely -- §9.2 now
+  as an explicit §15 open question.
+- **RESOLVED (2026-09-04):** sidesteps the undefined source entirely -- §10.2 now
   evaluates `nb=`/`na=` against the current time *at the moment of verification*
   ("time of detection"), not a generation timestamp nothing ever carried. §6.1's
   rationale for the window and §7.5's worked example were both reworded to match
@@ -100,7 +100,7 @@ invisible characters.
   on every hop, and digests the **final** response body. The CLI follows
   redirects via `urllib` defaults.
 - **Resolution needed:** state whether redirects are followed, a hop cap, and
-  that `dh=` covers the final response. Intersects §9.4 (descriptor tampering /
+  that `dh=` covers the final response. Intersects §10.4 (descriptor tampering /
   SSRF surface) and §B.4 (HTTP-origin fragility).
 - **RESOLVED (2026-09-04):** §7.2.2 now says redirects are permitted, with no
   mandated cap but "a reasonable starting point is no more than 5" -- matching
@@ -135,7 +135,7 @@ invisible characters.
   MUST accept both forms for either field.
 
 ### B6. No verifier-side cap on the no-`r=` crawl
-- §6.4 step 3 / §13 acknowledge the cost of "crawl until a query returns no
+- §6.4 step 3 / §14 acknowledge the cost of "crawl until a query returns no
   record" but set no ceiling.
 - **Implementation:** the demo caps the verify-time domain crawl at 10 selectors
   (`MAX_VERIFY_CRAWL`). Undocumented, and it would return a wrong "not found" for
@@ -150,7 +150,7 @@ invisible characters.
   mandate a number so it's not a bug, just worth aligning eventually.
 
 ### B7. "Try each cached key" assumes a cryptographic detector, not a statistical one
-- §14 already flags the aggregate false-positive problem for §6.4 step 5.
+- §15 already flags the aggregate false-positive problem for §6.4 step 5.
 - **Implementation:** the demo's domain crawl is "try up to N keys, accept the
   first that verifies." Safe for an exact signature (tzsataitw / Ed25519),
   **unsafe** for a statistical scheme (fairoze-style) without adjusting the
@@ -162,7 +162,7 @@ invisible characters.
   correctly -- it does NOT apply to an exact cryptographic check (Ed25519), only
   to a statistical/threshold detector, which MUST account for the aggregate
   false-positive rate as the cached key set grows. The "how to compute the
-  adjustment" question is left where it was, at the existing §14 bullet, which
+  adjustment" question is left where it was, at the existing §15 bullet, which
   §6.4 now cross-references rather than duplicating.
 
 ### B8. A record for a symmetric scheme has no `p=` -- §6.1 assumed every scheme is asymmetric
@@ -209,7 +209,7 @@ they sign/detect over.
 `tzsataitw`'s frame carries an unsigned `"<selector>._watermark-text.<domain>"`
 string so a verifier can do one targeted lookup instead of brute-forcing the
 whole cache (§6.4 step 5). Real tradeoff: cheaper verification vs. an
-unauthenticated field that discloses the claimed provider. Candidate for §13.
+unauthenticated field that discloses the claimed provider. Candidate for §14.
 
 ### C3. Hosting `d=` off the provider's domain
 The demo hosts `d=` on Google Drive. Allowed by §6.1 ("an HTTPS URL"), but it is
@@ -254,7 +254,7 @@ constant, so recognizing `fairoze-1` is sufficient. The draft should state that
 `a=` values are fully-specified parameter sets, not bare scheme names (kills the
 need for a `pp=` tag).
 
-**RESOLVED (2026-09-04):** added to §15's registry-entry paragraph -- each `a=`
+**RESOLVED (2026-09-04):** added to §16's registry-entry paragraph -- each `a=`
 identifier names a complete, versioned parameter set; a verifier that
 recognizes the identifier needs no side channel beyond it plus `p=`.
 
@@ -278,7 +278,7 @@ fails. Confirmed by `tests/test_fairoze_verify.py`
 (`test_edit_near_start_cascades_and_fails` vs `test_edit_in_final_segment_is_recovered`).
 
 Implications:
-- This is consistent with §10.2 ("does not improve robustness") but sharper than
+- This is consistent with §11.2 ("does not improve robustness") but sharper than
   the draft implies: it's not "less robust than symmetric schemes", it's "one
   character anywhere but the end breaks it".
 - The "robustness demo" idea (a sample with 1-2 chars changed that still
@@ -304,7 +304,7 @@ cyclically wrapped; if it stays silent, each `a=` defines its own detector, and
 ### E1. `tzsataitw` is no longer "just a toy" — it is the short-text option
 `fairoze-1` needs ~4360+ high-entropy characters (~700 words). It cannot mark a
 chat reply, a headline, a tweet, a single paragraph, code, or any terse answer.
-That is inherent to embedding a full signature statistically (D4 / §10.1), not a
+That is inherent to embedding a full signature statistically (D4 / §11.1), not a
 tuning problem.
 
 `tzsataitw` (a detached Ed25519 signature hidden via zero-width chars or
@@ -341,7 +341,7 @@ mechanism, so this is a real, usable pairing — not a stand-in.
 - ~~The demo page currently labels `tzsataitw-*` "Toy algorithms" in a
   callout.~~ **DONE** — demo callout now presents both mechanisms and their
   tradeoffs (Step 10).
-- Revisit the earlier suggestion (A/§15 note) to relegate `tzsataitw-*` to an
+- Revisit the earlier suggestion (A/§16 note) to relegate `tzsataitw-*` to an
   `x-` / experimental `a=` prefix — if it is the sanctioned short-text option it
   arguably deserves a normal identifier, still with the strippability caveat in
   its registry description. **Still open — not decided either way.**
@@ -398,7 +398,7 @@ outermost-first at verification time:
    "is this AI at all?" check. Different guarantee (probabilistic, no attribution,
    no non-repudiation), a paid API, and it reintroduces the walled-garden
    detection problem §3.1/§4.4 argue against. Belongs in a product pipeline,
-   not this spec. The draft could add one scoping sentence (§1 or §10.2).
+   not this spec. The draft could add one scoping sentence (§1 or §11.2).
 
 Why layer: the two marks fail to *different* attacks (see D4 and E1). An
 adversary must both normalize *and* paraphrase to strip both.

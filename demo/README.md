@@ -1,6 +1,6 @@
 # Demo server
 
-A small web sandbox for `draft-zink-xboundary-ai-text-watermark-verification-00`.
+A small web sandbox for `draft-zink-xboundary-ai-text-watermark-verification-01`.
 Standard-library Python; it imports and reuses `../tools/watermark_dns_tool.py`,
 `../tools/tzsataitw.py`, and (when `reedsolo` is installed) `../tools/fairoze.py`,
 and shells out to `openssl` and `dig`.

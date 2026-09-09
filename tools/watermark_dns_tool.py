@@ -2,7 +2,7 @@
 """
 watermark_dns_tool.py
 
-Reference tooling for draft-zink-xboundary-ai-text-watermark-verification-00
+Reference tooling for draft-zink-xboundary-ai-text-watermark-verification-01
 ("A DNS-Based Framework for Cross-Organization Verification of AI-Generated
 Text Watermarks").
 
@@ -2308,7 +2308,7 @@ def record_usable(record_text, at_time):
 WALKTHROUGH = r"""
 ================================================================================
   watermark_dns_tool.py -- what this does and the order to do it in
-  draft-zink-xboundary-ai-text-watermark-verification-00
+  draft-zink-xboundary-ai-text-watermark-verification-01
 ================================================================================
 
 This tool builds and checks the concrete artifacts the draft describes. There
@@ -2885,7 +2885,7 @@ MODE_HANDLERS = [
 def build_parser():
     p = argparse.ArgumentParser(
         prog="watermark_dns_tool.py",
-        description="Reference tooling for draft-zink-xboundary-ai-text-watermark-verification-00.",
+        description="Reference tooling for draft-zink-xboundary-ai-text-watermark-verification-01.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Every option is a '--' flag. Run --walkthrough first for the full explanation.\n"
                "Examples:\n"
